@@ -13,6 +13,7 @@
   - `supabase/security_hardening_04_storage.sql`
   - `supabase/workspace_membership_repair.sql`
   - `supabase/workspace_join_codes.sql`
+  - `supabase/workspace_access_lockdown.sql`
 - In Authentication > Providers, enable Email.
 - In Authentication > URL Configuration, add:
   - `http://localhost:3000/auth/callback`

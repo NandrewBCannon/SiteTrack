@@ -32,7 +32,7 @@ export function AuthCallbackClient() {
         if (cancelled) return;
 
         if (data.session) {
-          router.replace("/");
+          router.replace("/account");
           return;
         }
 

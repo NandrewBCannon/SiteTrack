@@ -37,12 +37,23 @@ export function setActiveWorkspaceId(workspaceId: string) {
   window.localStorage.setItem(activeWorkspaceKey, workspaceId);
 }
 
+export function clearActiveWorkspaceId() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(activeWorkspaceKey);
+}
+
 export async function loadSupabaseStore(): Promise<SupabaseStoreResult> {
   if (!supabase) return { data: emptyStore, workspace: null, workspaces: [] };
+
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  const userId = userData.user?.id;
+  if (!userId) return { data: emptyStore, workspace: null, workspaces: [] };
 
   const { data: memberships, error: memberError } = await supabase
     .from("workspace_members")
     .select("role, workspaces(id, name)")
+    .eq("user_id", userId)
     .order("created_at", { ascending: true });
 
   if (memberError) throw memberError;
@@ -56,19 +67,40 @@ export async function loadSupabaseStore(): Promise<SupabaseStoreResult> {
 
   const storedWorkspaceId = getActiveWorkspaceId();
   const workspace = workspaces.find((item) => item.id === storedWorkspaceId) ?? workspaces[0] ?? null;
-  if (!workspace) return { data: emptyStore, workspace: null, workspaces };
+  if (!workspace) {
+    clearActiveWorkspaceId();
+    return { data: emptyStore, workspace: null, workspaces };
+  }
   setActiveWorkspaceId(workspace.id);
 
-  const [sitesResult, buildingsResult, roomsResult, assetsResult, photosResult, logsResult] = await Promise.all([
-    supabase.from("sites").select("*").eq("workspace_id", workspace.id).order("created_at", { ascending: false }),
+  const isAdmin = workspace.role === "admin";
+  const { data: userSiteMemberships, error: userSiteMembershipError } = await supabase
+    .from("site_members")
+    .select("site_id")
+    .eq("user_id", userId);
+  if (userSiteMembershipError) throw userSiteMembershipError;
+
+  const assignedSiteIds = Array.from(new Set((userSiteMemberships ?? []).map((membership: any) => membership.site_id).filter(Boolean)));
+
+  const sitesQuery = supabase.from("sites").select("*").order("created_at", { ascending: false });
+  const scopedSitesQuery = isAdmin
+    ? sitesQuery.eq("workspace_id", workspace.id)
+    : assignedSiteIds.length
+      ? sitesQuery.in("id", assignedSiteIds)
+      : null;
+
+  const [sitesResult, buildingsResult, roomsResult, assetsResult] = await Promise.all([
+    scopedSitesQuery ?? Promise.resolve({ data: [], error: null }),
     supabase.from("buildings").select("*").order("created_at", { ascending: false }),
     supabase.from("rooms").select("*").order("created_at", { ascending: false }),
-    supabase.from("assets").select("*").eq("workspace_id", workspace.id).order("updated_at", { ascending: false }),
-    supabase.from("asset_photos").select("*").eq("workspace_id", workspace.id).order("created_at", { ascending: false }),
-    supabase.from("asset_logs").select("*").eq("workspace_id", workspace.id).order("created_at", { ascending: false })
+    isAdmin
+      ? supabase.from("assets").select("*").eq("workspace_id", workspace.id).order("updated_at", { ascending: false })
+      : assignedSiteIds.length
+        ? supabase.from("assets").select("*").in("site_id", assignedSiteIds).order("updated_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null })
   ]);
 
-  const error = sitesResult.error || buildingsResult.error || roomsResult.error || assetsResult.error || photosResult.error || logsResult.error;
+  const error = sitesResult.error || buildingsResult.error || roomsResult.error || assetsResult.error;
   if (error) throw error;
 
   const sites = (sitesResult.data ?? []).map(mapSite);
@@ -76,15 +108,34 @@ export async function loadSupabaseStore(): Promise<SupabaseStoreResult> {
   const buildings = (buildingsResult.data ?? []).map(mapBuilding).filter((building) => siteIds.has(building.site_id));
   const buildingIds = new Set(buildings.map((building) => building.id));
   const rooms = (roomsResult.data ?? []).map(mapRoom).filter((room) => buildingIds.has(room.building_id));
+  const assets = (assetsResult.data ?? []).map(mapAsset);
+  const assetIds = new Set(assets.map((asset) => asset.id));
+  const assetIdList = Array.from(assetIds);
+
+  const [photosResult, logsResult] = await Promise.all([
+    isAdmin
+      ? supabase.from("asset_photos").select("*").eq("workspace_id", workspace.id).order("created_at", { ascending: false })
+      : assetIds.size
+        ? supabase.from("asset_photos").select("*").in("asset_id", assetIdList).order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+    isAdmin
+      ? supabase.from("asset_logs").select("*").eq("workspace_id", workspace.id).order("created_at", { ascending: false })
+      : assetIds.size
+        ? supabase.from("asset_logs").select("*").in("asset_id", assetIdList).order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null })
+  ]);
+
+  const relatedError = photosResult.error || logsResult.error;
+  if (relatedError) throw relatedError;
 
   return {
     data: {
       sites,
       buildings,
       rooms,
-      assets: (assetsResult.data ?? []).map(mapAsset),
-      asset_photos: (photosResult.data ?? []).map(mapPhoto),
-      asset_logs: (logsResult.data ?? []).map(mapLog)
+      assets,
+      asset_photos: (photosResult.data ?? []).map(mapPhoto).filter((photo) => assetIds.has(photo.asset_id)),
+      asset_logs: (logsResult.data ?? []).map(mapLog).filter((log) => assetIds.has(log.asset_id))
     },
     workspace,
     workspaces

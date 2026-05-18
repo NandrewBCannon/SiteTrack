@@ -112,13 +112,17 @@ export function AccountClient() {
       }
 
       const [membersResult, siteMembersResult, invitesResult] = await Promise.all([
-        workspaceId
+        workspaceId && activeWorkspace?.role === "admin"
           ? supabase!.from("workspace_members").select("*").eq("workspace_id", workspaceId).order("created_at", { ascending: true })
-          : Promise.resolve({ data: [], error: null }),
-        siteIds.length
+          : workspaceId
+            ? supabase!.from("workspace_members").select("*").eq("workspace_id", workspaceId).eq("user_id", user.id).order("created_at", { ascending: true })
+            : Promise.resolve({ data: [], error: null }),
+        siteIds.length && activeWorkspace?.role === "admin"
           ? supabase!.from("site_members").select("*").in("site_id", siteIds).order("created_at", { ascending: true })
-          : Promise.resolve({ data: [], error: null }),
-        workspaceId
+          : siteIds.length
+            ? supabase!.from("site_members").select("*").in("site_id", siteIds).eq("user_id", user.id).order("created_at", { ascending: true })
+            : Promise.resolve({ data: [], error: null }),
+        workspaceId && activeWorkspace?.role === "admin"
           ? supabase!.from("invites").select("*").eq("workspace_id", workspaceId).order("created_at", { ascending: false })
           : Promise.resolve({ data: [], error: null })
       ]);
@@ -236,6 +240,21 @@ export function AccountClient() {
           <Loader2 className="mx-auto animate-spin text-signal" size={28} />
           <p className="mt-3 text-sm font-semibold text-steel">Loading account...</p>
         </div>
+      ) : !data.activeWorkspace ? (
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <section className="rounded-[8px] border border-zinc-200 bg-white p-5 shadow-panel">
+            <p className="inline-flex items-center gap-2 text-sm font-semibold text-ink"><KeyRound size={17} className="text-coral" />Workspace access</p>
+            <h2 className="mt-3 text-2xl font-semibold tracking-tight">Join or create a workspace</h2>
+            <p className="mt-2 text-sm leading-6 text-steel">
+              Your account is active, but it has not been granted access to any workspace yet. Join with a code from an admin, accept an invite link, or create a new workspace for your own company.
+            </p>
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              <Link href="/join" className="inline-flex min-h-11 items-center justify-center rounded-[8px] bg-ink px-4 text-sm font-semibold text-white">Join Workspace</Link>
+              <Link href="/workspace/new" className="inline-flex min-h-11 items-center justify-center rounded-[8px] border border-zinc-200 bg-white px-4 text-sm font-semibold text-ink shadow-sm">Create Workspace</Link>
+            </div>
+          </section>
+          <SecurityCard email={user.email ?? ""} onResetPassword={() => void sendResetEmail()} />
+        </div>
       ) : (
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
           <section className="grid gap-5">
@@ -248,33 +267,56 @@ export function AccountClient() {
               onMessage={setMessage}
               onError={setError}
             />
-            <WorkspaceUsersCard
-              activeWorkspace={data.activeWorkspace}
-              currentUserId={user.id}
-              currentUserEmail={user.email ?? ""}
-              isAdmin={isAdmin}
-              members={data.workspaceMembers}
-              invites={data.invites.filter((invite) => !invite.site_id)}
-              onChanged={refreshAccount}
-              onMessage={setMessage}
-              onError={setError}
-            />
+            {isAdmin ? (
+              <WorkspaceUsersCard
+                activeWorkspace={data.activeWorkspace}
+                currentUserId={user.id}
+                currentUserEmail={user.email ?? ""}
+                isAdmin={isAdmin}
+                members={data.workspaceMembers}
+                invites={data.invites.filter((invite) => !invite.site_id)}
+                onChanged={refreshAccount}
+                onMessage={setMessage}
+                onError={setError}
+              />
+            ) : (
+              <MemberWorkspaceCard
+                activeWorkspace={data.activeWorkspace}
+                currentUserId={user.id}
+                currentUserEmail={user.email ?? ""}
+                members={data.workspaceMembers}
+                onChanged={refreshAccount}
+                onMessage={setMessage}
+                onError={setError}
+              />
+            )}
           </section>
           <aside className="grid content-start gap-5">
-            <JobSiteAccessCard
-              currentUserId={user.id}
-              isAdmin={isAdmin}
-              selectedSiteId={selectedSiteId}
-              onSelectSite={setSelectedSiteId}
-              sites={data.store.sites}
-              workspaceMembers={data.workspaceMembers}
-              siteMembers={data.siteMembers}
-              invites={data.invites.filter((invite) => !!invite.site_id)}
-              workspaceId={data.activeWorkspace?.id ?? ""}
-              onChanged={refreshAccount}
-              onMessage={setMessage}
-              onError={setError}
-            />
+            {isAdmin ? (
+              <JobSiteAccessCard
+                currentUserId={user.id}
+                isAdmin={isAdmin}
+                selectedSiteId={selectedSiteId}
+                onSelectSite={setSelectedSiteId}
+                sites={data.store.sites}
+                workspaceMembers={data.workspaceMembers}
+                siteMembers={data.siteMembers}
+                invites={data.invites.filter((invite) => !!invite.site_id)}
+                workspaceId={data.activeWorkspace?.id ?? ""}
+                onChanged={refreshAccount}
+                onMessage={setMessage}
+                onError={setError}
+              />
+            ) : (
+              <MemberSitesCard
+                currentUserId={user.id}
+                sites={data.store.sites}
+                siteMembers={data.siteMembers}
+                onChanged={refreshAccount}
+                onMessage={setMessage}
+                onError={setError}
+              />
+            )}
           </aside>
           <div className="lg:col-span-2">
             <SecurityCard email={user.email ?? ""} onResetPassword={() => void sendResetEmail()} />
@@ -529,6 +571,61 @@ function WorkspaceUsersCard({
   );
 }
 
+function MemberWorkspaceCard({
+  activeWorkspace,
+  currentUserId,
+  currentUserEmail,
+  members,
+  onChanged,
+  onMessage,
+  onError
+}: {
+  activeWorkspace: WorkspaceSummary | null;
+  currentUserId: string;
+  currentUserEmail: string;
+  members: WorkspaceMember[];
+  onChanged: () => Promise<void>;
+  onMessage: (message: string) => void;
+  onError: (message: string) => void;
+}) {
+  const membership = members.find((member) => member.user_id === currentUserId);
+
+  async function leaveWorkspace() {
+    if (!supabase || !activeWorkspace || !membership) return;
+    const ok = window.confirm("Leave this workspace? You will lose access until an admin invites you again.");
+    if (!ok) return;
+    onError("");
+    onMessage("");
+    try {
+      const { error } = await supabase.from("workspace_members").delete().eq("id", membership.id).eq("user_id", currentUserId);
+      if (error) throw error;
+      setActiveWorkspaceId("");
+      onMessage("You left the workspace.");
+      await onChanged();
+    } catch (caught) {
+      onError(getErrorMessage(caught));
+    }
+  }
+
+  return (
+    <section className="rounded-[8px] border border-zinc-200 bg-white p-5 shadow-panel">
+      <p className="inline-flex items-center gap-2 text-sm font-semibold text-ink"><UsersRound size={17} className="text-signal" />Workspace membership</p>
+      <div className="mt-4 rounded-[8px] bg-zinc-50 p-3">
+        <p className="text-sm font-semibold text-ink">{currentUserEmail}</p>
+        <p className="mt-1 text-xs text-steel">Role: {membership?.role ?? activeWorkspace?.role ?? "member"}</p>
+      </div>
+      <p className="mt-3 text-xs leading-5 text-steel">Workspace editors are only available to admins. Your account can leave this workspace or manage password/security below.</p>
+      <button
+        type="button"
+        onClick={() => void leaveWorkspace()}
+        className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-[8px] border border-rose-200 bg-rose-50 px-4 text-sm font-semibold text-rose-700"
+      >
+        Leave Workspace
+      </button>
+    </section>
+  );
+}
+
 function JobSiteAccessCard({
   currentUserId,
   isAdmin,
@@ -692,6 +789,67 @@ function JobSiteAccessCard({
       ) : (
         <p className="mt-4 rounded-[8px] bg-zinc-50 px-3 py-3 text-sm text-steel">Create a job site in the Sites tab before assigning site access.</p>
       )}
+    </section>
+  );
+}
+
+function MemberSitesCard({
+  currentUserId,
+  sites,
+  siteMembers,
+  onChanged,
+  onMessage,
+  onError
+}: {
+  currentUserId: string;
+  sites: Site[];
+  siteMembers: SiteMember[];
+  onChanged: () => Promise<void>;
+  onMessage: (message: string) => void;
+  onError: (message: string) => void;
+}) {
+  async function leaveSite(memberId: string) {
+    if (!supabase) return;
+    const ok = window.confirm("Leave this job site? You will lose access until an admin grants it again.");
+    if (!ok) return;
+    onError("");
+    onMessage("");
+    try {
+      const { error } = await supabase.from("site_members").delete().eq("id", memberId).eq("user_id", currentUserId);
+      if (error) throw error;
+      onMessage("You left the job site.");
+      await onChanged();
+    } catch (caught) {
+      onError(getErrorMessage(caught));
+    }
+  }
+
+  return (
+    <section className="rounded-[8px] border border-zinc-200 bg-white p-5 shadow-panel">
+      <p className="inline-flex items-center gap-2 text-sm font-semibold text-ink"><MapPinned size={17} className="text-coral" />Your job sites</p>
+      <p className="mt-2 text-xs leading-5 text-steel">These are the job sites you have specifically been granted. Site editing is admin-only.</p>
+      <div className="mt-4 grid gap-2">
+        {sites.length ? sites.map((site) => {
+          const membership = siteMembers.find((member) => member.site_id === site.id && member.user_id === currentUserId);
+          return (
+            <div key={site.id} className="rounded-[8px] bg-zinc-50 p-3">
+              <p className="text-sm font-semibold text-ink">{site.name}</p>
+              <p className="mt-1 text-xs text-steel">{site.address || "No address"} | Role: {membership?.role ?? "viewer"}</p>
+              {membership ? (
+                <button
+                  type="button"
+                  onClick={() => void leaveSite(membership.id)}
+                  className="mt-3 inline-flex min-h-10 items-center justify-center rounded-[8px] border border-rose-200 bg-white px-3 text-xs font-semibold text-rose-700"
+                >
+                  Leave Job Site
+                </button>
+              ) : null}
+            </div>
+          );
+        }) : (
+          <p className="rounded-[8px] bg-zinc-50 px-3 py-3 text-sm text-steel">No job sites have been granted to this account yet.</p>
+        )}
+      </div>
     </section>
   );
 }

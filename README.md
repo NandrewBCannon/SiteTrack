@@ -72,6 +72,7 @@ The first hosted version should move from one local browser store to Supabase wo
    - `supabase/security_hardening_03_audit.sql`
    - `supabase/security_hardening_04_storage.sql`
    - `supabase/workspace_join_codes.sql`
+   - `supabase/workspace_access_lockdown.sql`
 4. Turn on Supabase email auth.
 5. Replace `useStoreData()` with Supabase queries scoped to the signed-in user's workspace.
 6. Store asset photos in the private `asset-photos` Supabase Storage bucket.

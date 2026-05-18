@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Boxes, Home, Loader2, LockKeyhole, LogOut, Map, Plus, Search, UserRound } from "lucide-react";
+import { Boxes, Building2, Home, KeyRound, Loader2, LockKeyhole, LogOut, Map, Plus, Search, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
+import { loadSupabaseStore } from "@/lib/supabaseStore";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: Home },
@@ -17,8 +18,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { authError, isConfigured, isLoading, user, signOut } = useAuth();
   const isAuthRoute = pathname.startsWith("/login") || pathname.startsWith("/signup") || pathname.startsWith("/auth/callback");
+  const isSetupRoute = isAuthRoute || pathname.startsWith("/join") || pathname.startsWith("/workspace/new") || pathname.startsWith("/account");
   const [syncError, setSyncError] = useState("");
   const [syncStatus, setSyncStatus] = useState("");
+  const [hasWorkspace, setHasWorkspace] = useState<boolean | null>(null);
 
   useEffect(() => {
     function onSyncError(event: Event) {
@@ -38,6 +41,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       window.removeEventListener("sitetrack-sync-status", onSyncStatus);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function checkWorkspace() {
+      if (!isConfigured || !user || isSetupRoute) {
+        setHasWorkspace(null);
+        return;
+      }
+
+      setHasWorkspace(null);
+      try {
+        const result = await loadSupabaseStore();
+        if (!cancelled) setHasWorkspace(Boolean(result.workspace));
+      } catch {
+        if (!cancelled) setHasWorkspace(false);
+      }
+    }
+
+    void checkWorkspace();
+    return () => {
+      cancelled = true;
+    };
+  }, [isConfigured, isSetupRoute, user]);
 
   function goTo(href: string) {
     window.location.assign(href);
@@ -137,6 +163,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Link href="/login" className="mt-5 inline-flex min-h-11 items-center justify-center rounded-[8px] bg-ink px-4 text-sm font-semibold text-white">
                 Go to Login
               </Link>
+            </section>
+          </div>
+        ) : isConfigured && user && !isSetupRoute && hasWorkspace === null ? (
+          <div className="grid min-h-[60vh] place-items-center">
+            <div className="rounded-[8px] border border-zinc-200 bg-white p-6 text-center shadow-panel">
+              <Loader2 className="mx-auto animate-spin text-signal" size={28} />
+              <p className="mt-3 text-sm font-semibold text-steel">Checking workspace access...</p>
+            </div>
+          </div>
+        ) : isConfigured && user && !isSetupRoute && hasWorkspace === false ? (
+          <div className="mx-auto grid min-h-[60vh] max-w-lg place-items-center">
+            <section className="w-full rounded-[8px] border border-zinc-200 bg-white p-6 text-center shadow-panel animate-rise">
+              <div className="mx-auto grid h-12 w-12 place-items-center rounded-[8px] bg-ink text-white">
+                <KeyRound size={23} />
+              </div>
+              <h1 className="mt-4 text-2xl font-semibold tracking-tight">Join or create a workspace</h1>
+              <p className="mt-2 text-sm leading-6 text-steel">
+                This account is signed in, but it does not have a workspace membership yet. Join by code or create a new workspace before opening job-site data.
+              </p>
+              <div className="mt-5 grid gap-2 sm:grid-cols-2">
+                <Link href="/join" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] bg-ink px-4 text-sm font-semibold text-white">
+                  <KeyRound size={17} />
+                  Join Workspace
+                </Link>
+                <Link href="/workspace/new" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] border border-zinc-200 bg-white px-4 text-sm font-semibold text-ink shadow-sm">
+                  <Building2 size={17} />
+                  Create Workspace
+                </Link>
+              </div>
             </section>
           </div>
         ) : (
