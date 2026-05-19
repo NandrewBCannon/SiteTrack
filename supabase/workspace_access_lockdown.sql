@@ -95,6 +95,47 @@ as '
   );
 ';
 
+create or replace function assert_asset_location_scope()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as '
+declare
+  resolved_site_id uuid;
+  resolved_building_id uuid;
+begin
+  if new.site_id is null or new.building_id is null or new.room_id is null then
+    raise exception ''Asset site, building, and room are required.'';
+  end if;
+
+  select buildings.site_id
+  into resolved_site_id
+  from buildings
+  where buildings.id = new.building_id;
+
+  if resolved_site_id is null or resolved_site_id <> new.site_id then
+    raise exception ''Asset building does not belong to the selected site.'';
+  end if;
+
+  select rooms.building_id
+  into resolved_building_id
+  from rooms
+  where rooms.id = new.room_id;
+
+  if resolved_building_id is null or resolved_building_id <> new.building_id then
+    raise exception ''Asset room does not belong to the selected building.'';
+  end if;
+
+  return new;
+end;
+';
+
+drop trigger if exists assets_assert_location_scope on assets;
+create trigger assets_assert_location_scope
+before insert or update of site_id, building_id, room_id on assets
+for each row execute function assert_asset_location_scope();
+
 drop policy if exists "Members can read workspace members" on workspace_members;
 drop policy if exists "Members can read own workspace membership" on workspace_members;
 drop policy if exists "Admins can manage workspace members" on workspace_members;

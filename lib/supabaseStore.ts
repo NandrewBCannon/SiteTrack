@@ -1,7 +1,7 @@
 "use client";
 
 import { supabase } from "@/lib/supabase";
-import type { Asset, AssetLog, AssetPhoto, Building, Room, Site, StoreData } from "@/lib/types";
+import type { Asset, AssetLog, AssetPhoto, AssetStatus, Building, Room, Site, StoreData } from "@/lib/types";
 
 const activeWorkspaceKey = "sitetrack-active-workspace-id";
 
@@ -165,6 +165,69 @@ export async function saveSupabaseStore(data: StoreData, workspaceId = getActive
   if (data.asset_logs.length) await throwOnError(supabase.from("asset_logs").upsert(data.asset_logs.map(toLogRow)));
 }
 
+export async function saveAssetToSupabase(asset: Omit<Asset, "created_at" | "updated_at">, photoUrl?: string) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  if (!asset.asset_number || !asset.item_name || !asset.site_id || !asset.building_id || !asset.room_id) {
+    throw new Error("Asset number, item name, site, building, and room are required.");
+  }
+
+  const existing = asset.id
+    ? await supabase.from("assets").select("id, location_in_room, status").eq("id", asset.id).maybeSingle()
+    : { data: null, error: null };
+  if (existing.error) throw existing.error;
+
+  const workspaceResult = await loadSupabaseStore();
+  const workspaceId = workspaceResult.workspace?.id;
+  if (!workspaceId) throw new Error("No active workspace found. Join or create a workspace before saving assets.");
+
+  const assetId = asset.id || crypto.randomUUID();
+  const assetRow = {
+    id: assetId,
+    asset_number: asset.asset_number,
+    serial_number: asset.serial_number,
+    item_name: asset.item_name,
+    item_type: asset.item_type,
+    brand: asset.brand,
+    model: asset.model,
+    mac_address: asset.mac_address,
+    ip_address: asset.ip_address,
+    switch_port: asset.switch_port,
+    network_patch_number: asset.network_patch_number,
+    site_id: asset.site_id,
+    building_id: asset.building_id,
+    room_id: asset.room_id,
+    location_in_room: asset.location_in_room,
+    patching_details: asset.patching_details,
+    status: asset.status,
+    notes: asset.notes,
+    workspace_id: workspaceId
+  };
+  const { error: assetError } = await supabase.from("assets").upsert(assetRow).select("id").single();
+  if (assetError) throw assetError;
+
+  const previousLocation = existing.data?.location_in_room ? existing.data.location_in_room : "New asset";
+  const { error: logError } = await supabase.from("asset_logs").insert({
+    asset_id: assetId,
+    action_type: statusToAction(asset.status),
+    previous_location: previousLocation,
+    new_location: asset.location_in_room || "",
+    notes: existing.data ? "Asset record updated." : "Asset created from add asset form.",
+    user_name: "Site user"
+  });
+  if (logError) throw logError;
+
+  if (photoUrl) {
+    const { error: photoError } = await supabase.from("asset_photos").insert({
+      asset_id: assetId,
+      photo_url: photoUrl,
+      caption: "Uploaded photo"
+    });
+    if (photoError) throw photoError;
+  }
+
+  return assetId;
+}
+
 async function deleteMissing(table: string, previousIds: string[], nextIds: string[]) {
   if (!supabase) return;
   const next = new Set(nextIds);
@@ -279,4 +342,15 @@ function toPhotoRow(photo: AssetPhoto) {
 
 function toLogRow(log: AssetLog) {
   return log;
+}
+
+function statusToAction(status: AssetStatus): AssetLog["action_type"] {
+  const actions: Record<AssetStatus, AssetLog["action_type"]> = {
+    installed: "Installed",
+    removed: "Removed",
+    replaced: "Replaced",
+    moved: "Moved",
+    damaged: "Faulty/Damaged"
+  };
+  return actions[status];
 }

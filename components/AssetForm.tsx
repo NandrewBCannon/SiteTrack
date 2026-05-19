@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Camera, ChevronDown, MapPin, Network, PackagePlus, ScanText, Save, Sparkles, Upload } from "lucide-react";
 import { Field, inputClass } from "@/components/Field";
 import { assetToView, saveAsset, saveStore } from "@/lib/store";
+import { saveAssetToSupabase } from "@/lib/supabaseStore";
 import type { Asset, AssetStatus, StoreData } from "@/lib/types";
 import { useStoreData } from "@/lib/useStoreData";
 
@@ -16,7 +17,7 @@ export function AssetForm({ assetId }: { assetId?: string }) {
   const router = useRouter();
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  const [data, setData] = useStoreData();
+  const [data, setData, isSupabaseMode] = useStoreData();
   const existing = assetId ? data.assets.find((asset) => asset.id === assetId) : undefined;
   const firstSite = data.sites[0];
   const firstBuilding = data.buildings.find((building) => building.site_id === firstSite?.id) ?? data.buildings[0];
@@ -112,7 +113,7 @@ export function AssetForm({ assetId }: { assetId?: string }) {
     });
   }
 
-  function onSubmit(event: React.FormEvent) {
+  async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
     const overlap = findAssetOverlap(data, draft);
@@ -124,11 +125,21 @@ export function AssetForm({ assetId }: { assetId?: string }) {
       setError("Asset number, item name, site, building, and room are required.");
       return;
     }
-    const next = saveAsset(data, draft, photoUrl);
-    saveStore(next);
-    setData(next);
-    const savedId = draft.id || next.assets.find((asset) => asset.asset_number === draft.asset_number)?.id;
-    router.push(`/assets/${savedId}`);
+    try {
+      if (isSupabaseMode) {
+        const savedId = await saveAssetToSupabase(draft, photoUrl);
+        router.push(`/assets/${savedId}`);
+        return;
+      }
+
+      const next = saveAsset(data, draft, photoUrl);
+      saveStore(next);
+      setData(next);
+      const savedId = draft.id || next.assets.find((asset) => asset.asset_number === draft.asset_number)?.id;
+      router.push(`/assets/${savedId}`);
+    } catch (caught) {
+      setError(getErrorMessage(caught));
+    }
   }
 
   function handlePhotoFile(file?: File) {
@@ -371,4 +382,13 @@ function extractNetworkLabel(text: string) {
     network_patch_number: patch,
     serial_number: serial
   };
+}
+
+function getErrorMessage(caught: unknown) {
+  if (caught instanceof Error) return caught.message;
+  if (caught && typeof caught === "object") {
+    const error = caught as { message?: string; details?: string; hint?: string; code?: string };
+    return [error.message, error.details, error.hint, error.code].filter(Boolean).join(" ");
+  }
+  return "Could not save asset.";
 }
