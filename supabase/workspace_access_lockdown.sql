@@ -17,6 +17,13 @@ alter table assets enable row level security;
 alter table asset_photos enable row level security;
 alter table asset_logs enable row level security;
 
+alter function public.generate_workspace_join_code() set search_path = public;
+alter function public.set_workspace_join_code() set search_path = public;
+alter function public.touch_row_security_metadata() set search_path = public;
+alter function public.copy_photo_security_scope() set search_path = public;
+alter function public.copy_log_security_scope() set search_path = public;
+alter function public.safe_uuid(text) set search_path = public;
+
 drop policy if exists "Authenticated users can manage sites" on sites;
 drop policy if exists "Authenticated users can manage buildings" on buildings;
 drop policy if exists "Authenticated users can manage rooms" on rooms;
@@ -136,6 +143,24 @@ create trigger assets_assert_location_scope
 before insert or update of site_id, building_id, room_id on assets
 for each row execute function assert_asset_location_scope();
 
+drop policy if exists "Members can read workspaces" on workspaces;
+drop policy if exists "Users can create workspaces" on workspaces;
+drop policy if exists "Admins can update workspaces" on workspaces;
+drop policy if exists "Admins can delete workspaces" on workspaces;
+create policy "Members can read workspaces"
+on workspaces for select to authenticated
+using (is_workspace_member(id));
+create policy "Users can create workspaces"
+on workspaces for insert to authenticated
+with check (created_by = auth.uid());
+create policy "Admins can update workspaces"
+on workspaces for update to authenticated
+using (has_workspace_role(id, array['admin']::workspace_role[]))
+with check (has_workspace_role(id, array['admin']::workspace_role[]));
+create policy "Admins can delete workspaces"
+on workspaces for delete to authenticated
+using (has_workspace_role(id, array['admin']::workspace_role[]));
+
 drop policy if exists "Members can read workspace members" on workspace_members;
 drop policy if exists "Members can read own workspace membership" on workspace_members;
 drop policy if exists "Admins can manage workspace members" on workspace_members;
@@ -165,6 +190,12 @@ with check (can_admin_site(site_id));
 create policy "Users can leave job sites"
 on site_members for delete to authenticated
 using (user_id = auth.uid());
+
+drop policy if exists "Admins can manage invites" on invites;
+create policy "Admins can manage invites"
+on invites for all to authenticated
+using (has_workspace_role(workspace_id, array['admin']::workspace_role[]))
+with check (has_workspace_role(workspace_id, array['admin']::workspace_role[]));
 
 drop policy if exists "Members can read sites" on sites;
 drop policy if exists "Admins and assigned users can read sites" on sites;
@@ -226,6 +257,37 @@ create policy "Admins can delete assets"
 on assets for delete to authenticated
 using (can_admin_site(site_id));
 
+drop policy if exists "Members can read asset photos" on asset_photos;
+drop policy if exists "Asset editors can insert photos" on asset_photos;
+drop policy if exists "Admins can delete photos" on asset_photos;
+drop policy if exists "Asset editors can update photos" on asset_photos;
+create policy "Members can read asset photos"
+on asset_photos for select to authenticated
+using (exists (select 1 from assets where assets.id = asset_photos.asset_id and can_access_site(assets.site_id)));
+create policy "Asset editors can insert photos"
+on asset_photos for insert to authenticated
+with check (exists (select 1 from assets where assets.id = asset_photos.asset_id and can_edit_assets_on_site(assets.site_id)));
+create policy "Asset editors can update photos"
+on asset_photos for update to authenticated
+using (exists (select 1 from assets where assets.id = asset_photos.asset_id and can_edit_assets_on_site(assets.site_id)))
+with check (exists (select 1 from assets where assets.id = asset_photos.asset_id and can_edit_assets_on_site(assets.site_id)));
+create policy "Admins can delete photos"
+on asset_photos for delete to authenticated
+using (exists (select 1 from assets where assets.id = asset_photos.asset_id and can_admin_site(assets.site_id)));
+
+drop policy if exists "Members can read asset logs" on asset_logs;
+drop policy if exists "Asset editors can insert logs" on asset_logs;
+drop policy if exists "Admins can delete logs" on asset_logs;
+create policy "Members can read asset logs"
+on asset_logs for select to authenticated
+using (exists (select 1 from assets where assets.id = asset_logs.asset_id and can_access_site(assets.site_id)));
+create policy "Asset editors can insert logs"
+on asset_logs for insert to authenticated
+with check (exists (select 1 from assets where assets.id = asset_logs.asset_id and can_edit_assets_on_site(assets.site_id)));
+create policy "Admins can delete logs"
+on asset_logs for delete to authenticated
+using (exists (select 1 from assets where assets.id = asset_logs.asset_id and can_admin_site(assets.site_id)));
+
 create or replace function join_workspace_with_code(code text)
 returns uuid
 language plpgsql
@@ -256,4 +318,30 @@ begin
   return target_workspace_id;
 end;
 ';
+
+revoke execute on function public.accept_invite(text) from anon, public;
+revoke execute on function public.add_workspace_creator_as_admin() from anon, authenticated, public;
+revoke execute on function public.assert_asset_location_scope() from anon, authenticated, public;
+revoke execute on function public.can_access_site(uuid) from anon, public;
+revoke execute on function public.can_admin_site(uuid) from anon, public;
+revoke execute on function public.can_edit_assets_on_site(uuid) from anon, public;
+revoke execute on function public.has_workspace_role(uuid, workspace_role[]) from anon, public;
+revoke execute on function public.is_workspace_member(uuid) from anon, public;
+revoke execute on function public.join_workspace_with_code(text) from anon, public;
+revoke execute on function public.regenerate_workspace_join_code(uuid) from anon, public;
+revoke execute on function public.generate_workspace_join_code() from anon, authenticated, public;
+revoke execute on function public.set_workspace_join_code() from anon, authenticated, public;
+revoke execute on function public.touch_row_security_metadata() from anon, authenticated, public;
+revoke execute on function public.copy_photo_security_scope() from anon, authenticated, public;
+revoke execute on function public.copy_log_security_scope() from anon, authenticated, public;
+revoke execute on function public.safe_uuid(text) from anon, authenticated, public;
+
+grant execute on function public.accept_invite(text) to authenticated;
+grant execute on function public.join_workspace_with_code(text) to authenticated;
+grant execute on function public.regenerate_workspace_join_code(uuid) to authenticated;
+grant execute on function public.can_access_site(uuid) to authenticated;
+grant execute on function public.can_admin_site(uuid) to authenticated;
+grant execute on function public.can_edit_assets_on_site(uuid) to authenticated;
+grant execute on function public.has_workspace_role(uuid, workspace_role[]) to authenticated;
+grant execute on function public.is_workspace_member(uuid) to authenticated;
 
