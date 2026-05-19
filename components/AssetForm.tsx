@@ -17,7 +17,7 @@ export function AssetForm({ assetId }: { assetId?: string }) {
   const router = useRouter();
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  const [data, setData, isSupabaseMode] = useStoreData();
+  const [data, setData, isSupabaseMode, workspace] = useStoreData();
   const existing = assetId ? data.assets.find((asset) => asset.id === assetId) : undefined;
   const firstSite = data.sites[0];
   const firstBuilding = data.buildings.find((building) => building.site_id === firstSite?.id) ?? data.buildings[0];
@@ -186,6 +186,14 @@ export function AssetForm({ assetId }: { assetId?: string }) {
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+      {isSupabaseMode && workspace && !data.sites.length ? (
+        <section className="rounded-[8px] border border-amber-200 bg-amber-50 p-5 text-amber-900 shadow-panel lg:col-span-2">
+          <h1 className="text-xl font-semibold tracking-tight">No job-site access yet</h1>
+          <p className="mt-2 text-sm leading-6">
+            Your account is signed into {workspace.name}, but no job sites have been granted to you yet. Ask a workspace admin to add you to a job site before adding assets.
+          </p>
+        </section>
+      ) : null}
       <form onSubmit={onSubmit} className="overflow-hidden rounded-[8px] border border-zinc-200 bg-white shadow-panel animate-rise">
         <div className="bg-gradient-to-r from-ink via-signal to-mint p-5 text-white sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">

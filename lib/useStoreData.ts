@@ -4,13 +4,14 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { seedData } from "@/lib/seed";
 import { loadStore, saveStore } from "@/lib/store";
-import { loadSupabaseStore, saveSupabaseStore } from "@/lib/supabaseStore";
+import { loadSupabaseStore, saveSupabaseStore, type WorkspaceSummary } from "@/lib/supabaseStore";
 import type { StoreData } from "@/lib/types";
 
 export function useStoreData() {
   const { isConfigured, user } = useAuth();
   const [data, setData] = useState<StoreData>(seedData);
   const [isSupabaseMode, setIsSupabaseMode] = useState(false);
+  const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -21,6 +22,7 @@ export function useStoreData() {
           const result = await loadSupabaseStore();
           if (cancelled) return;
           setIsSupabaseMode(true);
+          setWorkspace(result.workspace);
           setData(result.data);
           return;
         } catch (error) {
@@ -30,6 +32,7 @@ export function useStoreData() {
 
       if (!cancelled) {
         setIsSupabaseMode(false);
+        setWorkspace(null);
         setData(loadStore());
       }
     }
@@ -59,7 +62,7 @@ export function useStoreData() {
     }
   }
 
-  return [data, commit, isSupabaseMode] as const;
+  return [data, commit, isSupabaseMode, workspace] as const;
 }
 
 function getSupabaseErrorMessage(error: unknown) {

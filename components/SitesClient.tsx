@@ -22,7 +22,7 @@ import type { Room, StoreData } from "@/lib/types";
 import { useStoreData } from "@/lib/useStoreData";
 
 export function SitesClient() {
-  const [data, setData] = useStoreData();
+  const [data, setData, isSupabaseMode, workspace] = useStoreData();
   const [selectedSiteId, setSelectedSiteId] = useState<string | undefined>(data.sites[0]?.id);
   const [siteName, setSiteName] = useState("");
   const [client, setClient] = useState("");
@@ -30,6 +30,7 @@ export function SitesClient() {
   const [address, setAddress] = useState("");
   const [siteError, setSiteError] = useState("");
   const selectedSite = data.sites.find((site) => site.id === selectedSiteId) ?? data.sites[0];
+  const canManageSites = !isSupabaseMode || workspace?.role === "admin";
 
   function commit(next: StoreData) {
     saveStore(next);
@@ -70,23 +71,29 @@ export function SitesClient() {
               Pan around the board, tap a pin, then manage that site&apos;s buildings, rooms, assets, and exports.
             </p>
           </div>
-          <details className="group w-full overflow-hidden rounded-[8px] border border-zinc-200 bg-white transition hover:border-zinc-300 sm:w-[340px]">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
-              <span className="inline-flex items-center gap-2 text-sm font-semibold text-ink"><Plus size={17} />Add job site</span>
-              <ChevronDown className="text-steel transition group-open:rotate-180" size={18} />
-            </summary>
-            <form onSubmit={addSite} className="grid gap-3 border-t border-zinc-100 p-4">
-              <Field label="Job site"><input className={inputClass} value={siteName} onChange={(e) => setSiteName(e.target.value)} required /></Field>
-              <Field label="Client"><input className={inputClass} value={client} onChange={(e) => setClient(e.target.value)} /></Field>
-              <Field label="Job number"><input className={inputClass} value={job} onChange={(e) => setJob(e.target.value)} /></Field>
-              <Field label="Address"><AddressAutocomplete value={address} onChange={setAddress} /></Field>
-              {siteError ? <p className="rounded-[8px] bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{siteError}</p> : null}
-              <button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] bg-ink px-4 text-sm font-semibold text-white transition hover:-translate-y-0.5">
-                <Plus size={17} />
-                Create Site
-              </button>
-            </form>
-          </details>
+          {canManageSites ? (
+            <details className="group w-full overflow-hidden rounded-[8px] border border-zinc-200 bg-white transition hover:border-zinc-300 sm:w-[340px]">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+                <span className="inline-flex items-center gap-2 text-sm font-semibold text-ink"><Plus size={17} />Add job site</span>
+                <ChevronDown className="text-steel transition group-open:rotate-180" size={18} />
+              </summary>
+              <form onSubmit={addSite} className="grid gap-3 border-t border-zinc-100 p-4">
+                <Field label="Job site"><input className={inputClass} value={siteName} onChange={(e) => setSiteName(e.target.value)} required /></Field>
+                <Field label="Client"><input className={inputClass} value={client} onChange={(e) => setClient(e.target.value)} /></Field>
+                <Field label="Job number"><input className={inputClass} value={job} onChange={(e) => setJob(e.target.value)} /></Field>
+                <Field label="Address"><AddressAutocomplete value={address} onChange={setAddress} /></Field>
+                {siteError ? <p className="rounded-[8px] bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{siteError}</p> : null}
+                <button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] bg-ink px-4 text-sm font-semibold text-white transition hover:-translate-y-0.5">
+                  <Plus size={17} />
+                  Create Site
+                </button>
+              </form>
+            </details>
+          ) : (
+            <div className="w-full rounded-[8px] border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900 sm:w-[340px]">
+              Site, building, and room management is admin-only. Ask an admin to grant you access to a job site.
+            </div>
+          )}
         </div>
       </section>
 
@@ -100,6 +107,7 @@ export function SitesClient() {
               data={data}
               siteId={selectedSite.id}
               accent={data.sites.findIndex((site) => site.id === selectedSite.id) % 3}
+              canManage={canManageSites}
               onChange={(next) => {
                 commit(next);
                 if (!next.sites.some((site) => site.id === selectedSite.id)) {
@@ -109,7 +117,7 @@ export function SitesClient() {
             />
           ) : (
             <div className="rounded-[8px] border border-dashed border-zinc-300 bg-white p-8 text-center text-steel shadow-panel">
-              Add your first job site to drop a pin.
+              {canManageSites ? "Add your first job site to drop a pin." : "No job sites have been granted to this account yet."}
             </div>
           )}
         </div>
@@ -118,7 +126,7 @@ export function SitesClient() {
   );
 }
 
-function SitePanel({ data, siteId, accent, onChange }: { data: StoreData; siteId: string; accent: number; onChange: (data: StoreData) => void }) {
+function SitePanel({ data, siteId, accent, canManage, onChange }: { data: StoreData; siteId: string; accent: number; canManage: boolean; onChange: (data: StoreData) => void }) {
   const site = data.sites.find((item) => item.id === siteId)!;
   const buildings = data.buildings.filter((building) => building.site_id === site.id);
   const assetCount = data.assets.filter((asset) => asset.site_id === site.id).length;
@@ -195,7 +203,7 @@ function SitePanel({ data, siteId, accent, onChange }: { data: StoreData; siteId
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          <ActionMenu
+          {canManage ? <ActionMenu
             label={`Site actions for ${site.name}`}
             isOpen={isSiteMenuOpen}
             onToggle={() => setIsSiteMenuOpen((current) => !current)}
@@ -204,14 +212,14 @@ function SitePanel({ data, siteId, accent, onChange }: { data: StoreData; siteId
               { label: "Edit site", onSelect: () => { setIsEditingSite(true); setIsSiteMenuOpen(false); } },
               { label: "Delete site", danger: true, onSelect: () => { setIsSiteMenuOpen(false); confirmDeleteSite(); } }
             ]}
-          />
+          /> : null}
           <ChevronDown className="mt-2 text-steel transition group-open:rotate-180" size={18} />
         </span>
       </summary>
 
       <div className="grid gap-4 border-t border-zinc-100 p-5">
         {panelError ? <p className="rounded-[8px] bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{panelError}</p> : null}
-        {isEditingSite ? (
+        {canManage && isEditingSite ? (
           <form onSubmit={saveSite} className="grid gap-2 rounded-[8px] bg-zinc-50 p-3 sm:grid-cols-2">
             <input className={inputClass} value={siteDraft.name} onChange={(e) => setSiteDraft({ ...siteDraft, name: e.target.value })} placeholder="Site name" autoFocus />
             <input className={inputClass} value={siteDraft.client_name} onChange={(e) => setSiteDraft({ ...siteDraft, client_name: e.target.value })} placeholder="Client" />
@@ -236,7 +244,7 @@ function SitePanel({ data, siteId, accent, onChange }: { data: StoreData; siteId
           </div>
         </details>
 
-        <details className="group/add rounded-[8px] border border-zinc-200 bg-white">
+        {canManage ? <details className="group/add rounded-[8px] border border-zinc-200 bg-white">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
             Add building
             <ChevronDown className="transition group-open/add:rotate-180" size={17} />
@@ -245,17 +253,17 @@ function SitePanel({ data, siteId, accent, onChange }: { data: StoreData; siteId
             <input className={`${inputClass} flex-1`} value={buildingName} onChange={(e) => setBuildingName(e.target.value)} placeholder="Building name" />
             <button className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] bg-ink text-white" aria-label="Add building"><Plus size={18} /></button>
           </form>
-        </details>
+        </details> : null}
 
         <div className="grid gap-3">
-          {buildings.map((building) => <BuildingPanel key={building.id} data={data} buildingId={building.id} onChange={onChange} />)}
+          {buildings.map((building) => <BuildingPanel key={building.id} data={data} buildingId={building.id} canManage={canManage} onChange={onChange} />)}
         </div>
       </div>
     </details>
   );
 }
 
-function BuildingPanel({ data, buildingId, onChange }: { data: StoreData; buildingId: string; onChange: (data: StoreData) => void }) {
+function BuildingPanel({ data, buildingId, canManage, onChange }: { data: StoreData; buildingId: string; canManage: boolean; onChange: (data: StoreData) => void }) {
   const building = data.buildings.find((item) => item.id === buildingId)!;
   const rooms = data.rooms.filter((room) => room.building_id === building.id);
   const assetCount = data.assets.filter((asset) => asset.building_id === building.id).length;
@@ -310,7 +318,7 @@ function BuildingPanel({ data, buildingId, onChange }: { data: StoreData; buildi
           <span className="hidden rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-steel sm:inline">{assetCount} assets</span>
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          <ActionMenu
+          {canManage ? <ActionMenu
             label={`Building actions for ${building.name}`}
             isOpen={isMenuOpen}
             onToggle={() => setIsMenuOpen((current) => !current)}
@@ -319,14 +327,14 @@ function BuildingPanel({ data, buildingId, onChange }: { data: StoreData; buildi
               { label: "Edit building", onSelect: () => { setIsEditingBuilding(true); setIsMenuOpen(false); } },
               { label: "Delete building", danger: true, onSelect: () => { setIsMenuOpen(false); confirmDeleteBuilding(); } }
             ]}
-          />
+          /> : null}
           <ChevronDown className="text-steel transition group-open/building:rotate-180" size={17} />
         </span>
       </summary>
 
       <div className="grid gap-3 border-t border-zinc-200 p-3">
         {buildingError ? <p className="rounded-[8px] bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{buildingError}</p> : null}
-        {isEditingBuilding ? (
+        {canManage && isEditingBuilding ? (
           <form onSubmit={saveBuilding} className="flex gap-2">
             <input className={`${inputClass} flex-1 bg-white`} value={buildingDraft} onChange={(e) => setBuildingDraft(e.target.value)} autoFocus />
             <button className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] bg-ink text-white" aria-label="Save building"><Check size={18} /></button>
@@ -344,7 +352,7 @@ function BuildingPanel({ data, buildingId, onChange }: { data: StoreData; buildi
           </div>
         </details>
 
-        <details className="group/add rounded-[8px] border border-zinc-200 bg-white">
+        {canManage ? <details className="group/add rounded-[8px] border border-zinc-200 bg-white">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
             Add room
             <ChevronDown className="transition group-open/add:rotate-180" size={17} />
@@ -355,17 +363,17 @@ function BuildingPanel({ data, buildingId, onChange }: { data: StoreData; buildi
             <input className={inputClass} value={floor} onChange={(e) => setFloor(e.target.value)} placeholder="Floor" />
             <button className="inline-flex h-11 items-center justify-center rounded-[8px] bg-ink text-white" aria-label="Add room"><Plus size={18} /></button>
           </form>
-        </details>
+        </details> : null}
 
         <div className="flex flex-wrap gap-2">
-          {rooms.map((room) => <EditableRoom key={room.id} data={data} room={room} onChange={onChange} />)}
+          {rooms.map((room) => <EditableRoom key={room.id} data={data} room={room} canManage={canManage} onChange={onChange} />)}
         </div>
       </div>
     </details>
   );
 }
 
-function EditableRoom({ data, room, onChange }: { data: StoreData; room: Room; onChange: (data: StoreData) => void }) {
+function EditableRoom({ data, room, canManage, onChange }: { data: StoreData; room: Room; canManage: boolean; onChange: (data: StoreData) => void }) {
   const [isEditing, setIsEditing] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [draft, setDraft] = useState({
@@ -416,7 +424,7 @@ function EditableRoom({ data, room, onChange }: { data: StoreData; room: Room; o
     <span className="relative inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white py-1.5 pl-3 pr-1 text-sm text-steel transition hover:-translate-y-0.5 hover:border-zinc-300">
       <DoorOpen size={15} className="text-mint" />
       <span>{room.room_number} {room.room_name ? `| ${room.room_name}` : ""}{room.floor ? ` | Floor ${room.floor}` : ""}</span>
-      <ActionMenu
+      {canManage ? <ActionMenu
         label={`Room actions for ${room.room_number}`}
         isOpen={isMenuOpen}
         compact
@@ -426,7 +434,7 @@ function EditableRoom({ data, room, onChange }: { data: StoreData; room: Room; o
           { label: "Edit room", onSelect: () => { setIsEditing(true); setIsMenuOpen(false); } },
           { label: "Delete room", danger: true, onSelect: () => { setIsMenuOpen(false); confirmDeleteRoom(); } }
         ]}
-      />
+      /> : null}
     </span>
   );
 }
