@@ -24,6 +24,25 @@ alter function public.copy_photo_security_scope() set search_path = public;
 alter function public.copy_log_security_scope() set search_path = public;
 alter function public.safe_uuid(text) set search_path = public;
 
+create or replace function set_workspace_join_code()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as '
+begin
+  if new.join_code is null then
+    new.join_code = upper(substring(encode(gen_random_bytes(8), ''hex'') from 1 for 8));
+  end if;
+  return new;
+end;
+';
+
+drop trigger if exists workspaces_set_join_code on workspaces;
+create trigger workspaces_set_join_code
+before insert on workspaces
+for each row execute function set_workspace_join_code();
+
 drop policy if exists "Authenticated users can manage sites" on sites;
 drop policy if exists "Authenticated users can manage buildings" on buildings;
 drop policy if exists "Authenticated users can manage rooms" on rooms;
@@ -316,6 +335,28 @@ begin
   on conflict (workspace_id, user_id) do nothing;
 
   return target_workspace_id;
+end;
+';
+
+create or replace function regenerate_workspace_join_code(target_workspace_id uuid)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as '
+declare
+  next_code text;
+begin
+  if not has_workspace_role(target_workspace_id, array[''admin'']::workspace_role[]) then
+    raise exception ''Only workspace admins can regenerate join codes.'';
+  end if;
+
+  next_code = upper(substring(encode(gen_random_bytes(8), ''hex'') from 1 for 8));
+  update workspaces
+  set join_code = next_code
+  where id = target_workspace_id;
+
+  return next_code;
 end;
 ';
 
