@@ -7,6 +7,8 @@
 -- table access. Workspace membership alone is not job-site membership.
 -- Existing databases must run supabase/add_manager_role.sql once before this file.
 
+create schema if not exists app_private;
+
 alter table workspaces enable row level security;
 alter table workspace_members enable row level security;
 alter table site_members enable row level security;
@@ -369,7 +371,7 @@ create policy "Admins can delete logs"
 on asset_logs for delete to authenticated
 using (exists (select 1 from assets where assets.id = asset_logs.asset_id and can_admin_site(assets.site_id)));
 
-create or replace function join_workspace_with_code(code text)
+create or replace function app_private.join_workspace_with_code_impl(code text)
 returns uuid
 language plpgsql
 security definer
@@ -400,7 +402,7 @@ begin
 end;
 ';
 
-create or replace function regenerate_workspace_join_code(target_workspace_id uuid)
+create or replace function app_private.regenerate_workspace_join_code_impl(target_workspace_id uuid)
 returns text
 language plpgsql
 security definer
@@ -420,6 +422,29 @@ begin
 
   return next_code;
 end;
+';
+
+revoke execute on function app_private.join_workspace_with_code_impl(text) from anon, authenticated, public;
+revoke execute on function app_private.regenerate_workspace_join_code_impl(uuid) from anon, authenticated, public;
+grant execute on function app_private.join_workspace_with_code_impl(text) to authenticated;
+grant execute on function app_private.regenerate_workspace_join_code_impl(uuid) to authenticated;
+
+create or replace function join_workspace_with_code(code text)
+returns uuid
+language sql
+security invoker
+set search_path = public, app_private
+as '
+  select app_private.join_workspace_with_code_impl(code);
+';
+
+create or replace function regenerate_workspace_join_code(target_workspace_id uuid)
+returns text
+language sql
+security invoker
+set search_path = public, app_private
+as '
+  select app_private.regenerate_workspace_join_code_impl(target_workspace_id);
 ';
 
 revoke execute on function public.accept_invite(text) from anon, public;

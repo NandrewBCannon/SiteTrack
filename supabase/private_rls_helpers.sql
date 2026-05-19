@@ -5,6 +5,7 @@
 create schema if not exists app_private;
 
 revoke all on schema app_private from anon, authenticated, public;
+grant usage on schema app_private to authenticated;
 
 create or replace function app_private.is_workspace_member(target_workspace_id uuid)
 returns boolean
@@ -308,7 +309,7 @@ create policy "Admins can delete logs"
 on asset_logs for delete to authenticated
 using (exists (select 1 from assets where assets.id = asset_logs.asset_id and app_private.can_admin_site(assets.site_id)));
 
-create or replace function join_workspace_with_code(code text)
+create or replace function app_private.join_workspace_with_code_impl(code text)
 returns uuid
 language plpgsql
 security definer
@@ -339,7 +340,7 @@ begin
 end;
 ';
 
-create or replace function regenerate_workspace_join_code(target_workspace_id uuid)
+create or replace function app_private.regenerate_workspace_join_code_impl(target_workspace_id uuid)
 returns text
 language plpgsql
 security definer
@@ -359,6 +360,84 @@ begin
 
   return next_code;
 end;
+';
+
+create or replace function app_private.accept_invite_impl(invite_token text)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, app_private
+as '
+declare
+  invite_row invites%rowtype;
+begin
+  if auth.uid() is null then
+    raise exception ''You must be signed in to accept an invite.'';
+  end if;
+
+  select *
+  into invite_row
+  from invites
+  where token = invite_token
+    and accepted_at is null
+    and expires_at > now()
+  limit 1;
+
+  if invite_row.id is null then
+    raise exception ''Invite is invalid, expired, or already accepted.'';
+  end if;
+
+  insert into workspace_members (workspace_id, user_id, role)
+  values (invite_row.workspace_id, auth.uid(), invite_row.role)
+  on conflict (workspace_id, user_id) do update set role = excluded.role;
+
+  if invite_row.site_id is not null then
+    insert into site_members (site_id, user_id, role)
+    values (invite_row.site_id, auth.uid(), invite_row.role)
+    on conflict (site_id, user_id) do update set role = excluded.role;
+  end if;
+
+  update invites
+  set accepted_at = now()
+  where id = invite_row.id;
+
+  return invite_row.workspace_id;
+end;
+';
+
+revoke execute on function app_private.join_workspace_with_code_impl(text) from anon, authenticated, public;
+revoke execute on function app_private.regenerate_workspace_join_code_impl(uuid) from anon, authenticated, public;
+revoke execute on function app_private.accept_invite_impl(text) from anon, authenticated, public;
+
+grant execute on function app_private.join_workspace_with_code_impl(text) to authenticated;
+grant execute on function app_private.regenerate_workspace_join_code_impl(uuid) to authenticated;
+grant execute on function app_private.accept_invite_impl(text) to authenticated;
+
+create or replace function public.join_workspace_with_code(code text)
+returns uuid
+language sql
+security invoker
+set search_path = public, app_private
+as '
+  select app_private.join_workspace_with_code_impl(code);
+';
+
+create or replace function public.regenerate_workspace_join_code(target_workspace_id uuid)
+returns text
+language sql
+security invoker
+set search_path = public, app_private
+as '
+  select app_private.regenerate_workspace_join_code_impl(target_workspace_id);
+';
+
+create or replace function public.accept_invite(invite_token text)
+returns uuid
+language sql
+security invoker
+set search_path = public, app_private
+as '
+  select app_private.accept_invite_impl(invite_token);
 ';
 
 revoke execute on function public.can_access_site(uuid) from anon, authenticated, public;

@@ -35,16 +35,18 @@ create trigger workspaces_set_join_code
 before insert on workspaces
 for each row execute function set_workspace_join_code();
 
-create or replace function regenerate_workspace_join_code(target_workspace_id uuid)
+create schema if not exists app_private;
+
+create or replace function app_private.regenerate_workspace_join_code_impl(target_workspace_id uuid)
 returns text
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, app_private
 as '
 declare
   next_code text;
 begin
-  if not has_workspace_role(target_workspace_id, array[''admin'']::workspace_role[]) then
+  if not app_private.has_workspace_role(target_workspace_id, array[''admin'']::workspace_role[]) then
     raise exception ''Only workspace admins can regenerate join codes.'';
   end if;
 
@@ -57,11 +59,11 @@ begin
 end;
 ';
 
-create or replace function join_workspace_with_code(code text)
+create or replace function app_private.join_workspace_with_code_impl(code text)
 returns uuid
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, app_private
 as '
 declare
   target_workspace_id uuid;
@@ -81,18 +83,18 @@ begin
   end if;
 
   insert into workspace_members (workspace_id, user_id, role)
-  values (target_workspace_id, auth.uid(), ''technician'')
+  values (target_workspace_id, auth.uid(), ''viewer'')
   on conflict (workspace_id, user_id) do nothing;
 
   return target_workspace_id;
 end;
 ';
 
-create or replace function accept_invite(invite_token text)
+create or replace function app_private.accept_invite_impl(invite_token text)
 returns uuid
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, app_private
 as '
 declare
   invite_row invites%rowtype;
@@ -129,4 +131,38 @@ begin
 
   return invite_row.workspace_id;
 end;
+';
+
+revoke execute on function app_private.regenerate_workspace_join_code_impl(uuid) from anon, authenticated, public;
+revoke execute on function app_private.join_workspace_with_code_impl(text) from anon, authenticated, public;
+revoke execute on function app_private.accept_invite_impl(text) from anon, authenticated, public;
+grant execute on function app_private.regenerate_workspace_join_code_impl(uuid) to authenticated;
+grant execute on function app_private.join_workspace_with_code_impl(text) to authenticated;
+grant execute on function app_private.accept_invite_impl(text) to authenticated;
+
+create or replace function regenerate_workspace_join_code(target_workspace_id uuid)
+returns text
+language sql
+security invoker
+set search_path = public, app_private
+as '
+  select app_private.regenerate_workspace_join_code_impl(target_workspace_id);
+';
+
+create or replace function join_workspace_with_code(code text)
+returns uuid
+language sql
+security invoker
+set search_path = public, app_private
+as '
+  select app_private.join_workspace_with_code_impl(code);
+';
+
+create or replace function accept_invite(invite_token text)
+returns uuid
+language sql
+security invoker
+set search_path = public, app_private
+as '
+  select app_private.accept_invite_impl(invite_token);
 ';
