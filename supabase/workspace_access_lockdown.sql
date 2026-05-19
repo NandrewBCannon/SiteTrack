@@ -96,6 +96,7 @@ as '
 ';
 
 drop policy if exists "Members can read workspace members" on workspace_members;
+drop policy if exists "Members can read own workspace membership" on workspace_members;
 drop policy if exists "Admins can manage workspace members" on workspace_members;
 drop policy if exists "Users can leave workspace" on workspace_members;
 create policy "Members can read own workspace membership"
@@ -110,6 +111,7 @@ on workspace_members for delete to authenticated
 using (user_id = auth.uid() and role <> 'admin');
 
 drop policy if exists "Members can read site members" on site_members;
+drop policy if exists "Users can read own site memberships" on site_members;
 drop policy if exists "Admins can manage site members" on site_members;
 drop policy if exists "Users can leave job sites" on site_members;
 create policy "Users can read own site memberships"
@@ -124,6 +126,7 @@ on site_members for delete to authenticated
 using (user_id = auth.uid());
 
 drop policy if exists "Members can read sites" on sites;
+drop policy if exists "Admins and assigned users can read sites" on sites;
 drop policy if exists "Admins can insert sites" on sites;
 drop policy if exists "Admins can update sites" on sites;
 drop policy if exists "Admins can delete sites" on sites;
@@ -142,6 +145,7 @@ on sites for delete to authenticated
 using (can_admin_site(id));
 
 drop policy if exists "Members can read buildings" on buildings;
+drop policy if exists "Assigned users can read buildings" on buildings;
 drop policy if exists "Admins can manage buildings" on buildings;
 create policy "Assigned users can read buildings"
 on buildings for select to authenticated
@@ -152,6 +156,7 @@ using (can_admin_site(site_id))
 with check (can_admin_site(site_id));
 
 drop policy if exists "Members can read rooms" on rooms;
+drop policy if exists "Assigned users can read rooms" on rooms;
 drop policy if exists "Admins can manage rooms" on rooms;
 create policy "Assigned users can read rooms"
 on rooms for select to authenticated
@@ -162,6 +167,7 @@ using (exists (select 1 from buildings where buildings.id = rooms.building_id an
 with check (exists (select 1 from buildings where buildings.id = rooms.building_id and can_admin_site(buildings.site_id)));
 
 drop policy if exists "Members can read assets" on assets;
+drop policy if exists "Assigned users can read assets" on assets;
 drop policy if exists "Admins and technicians can insert assets" on assets;
 drop policy if exists "Admins and technicians can update assets" on assets;
 drop policy if exists "Admins can delete assets" on assets;
