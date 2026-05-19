@@ -17,6 +17,18 @@ alter table assets enable row level security;
 alter table asset_photos enable row level security;
 alter table asset_logs enable row level security;
 
+alter table assets drop constraint if exists assets_site_id_fkey;
+alter table assets add constraint assets_site_id_fkey
+foreign key (site_id) references sites(id) on delete cascade;
+
+alter table assets drop constraint if exists assets_building_id_fkey;
+alter table assets add constraint assets_building_id_fkey
+foreign key (building_id) references buildings(id) on delete cascade;
+
+alter table assets drop constraint if exists assets_room_id_fkey;
+alter table assets add constraint assets_room_id_fkey
+foreign key (room_id) references rooms(id) on delete cascade;
+
 alter function public.generate_workspace_join_code() set search_path = public;
 alter function public.set_workspace_join_code() set search_path = public;
 alter function public.touch_row_security_metadata() set search_path = public;
