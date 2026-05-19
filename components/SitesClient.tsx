@@ -31,6 +31,8 @@ export function SitesClient() {
   const [siteError, setSiteError] = useState("");
   const selectedSite = data.sites.find((site) => site.id === selectedSiteId) ?? data.sites[0];
   const canManageSites = !isSupabaseMode || workspace?.role === "admin";
+  const canShareAllSites = !isSupabaseMode || workspace?.role === "admin";
+  const shareableSiteIds = workspace?.manageableSiteIds ?? [];
 
   function commit(next: StoreData) {
     saveStore(next);
@@ -108,6 +110,7 @@ export function SitesClient() {
               siteId={selectedSite.id}
               accent={data.sites.findIndex((site) => site.id === selectedSite.id) % 3}
               canManage={canManageSites}
+              canShare={canShareAllSites || shareableSiteIds.includes(selectedSite.id)}
               onChange={(next) => {
                 commit(next);
                 if (!next.sites.some((site) => site.id === selectedSite.id)) {
@@ -126,7 +129,7 @@ export function SitesClient() {
   );
 }
 
-function SitePanel({ data, siteId, accent, canManage, onChange }: { data: StoreData; siteId: string; accent: number; canManage: boolean; onChange: (data: StoreData) => void }) {
+function SitePanel({ data, siteId, accent, canManage, canShare, onChange }: { data: StoreData; siteId: string; accent: number; canManage: boolean; canShare: boolean; onChange: (data: StoreData) => void }) {
   const site = data.sites.find((item) => item.id === siteId)!;
   const buildings = data.buildings.filter((building) => building.site_id === site.id);
   const assetCount = data.assets.filter((asset) => asset.site_id === site.id).length;
@@ -234,7 +237,7 @@ function SitePanel({ data, siteId, accent, canManage, onChange }: { data: StoreD
           </form>
         ) : null}
 
-        <details className="group/share rounded-[8px] border border-zinc-200 bg-zinc-50">
+        {canShare ? <details className="group/share rounded-[8px] border border-zinc-200 bg-zinc-50">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
             Share {site.name}
             <ChevronDown className="transition group-open/share:rotate-180" size={17} />
@@ -242,7 +245,7 @@ function SitePanel({ data, siteId, accent, canManage, onChange }: { data: StoreD
           <div className="border-t border-zinc-200 p-3">
             <ExportRegisterButton data={data} compact siteId={site.id} filenamePrefix={`${site.name} asset register`} />
           </div>
-        </details>
+        </details> : null}
 
         {canManage ? <details className="group/add rounded-[8px] border border-zinc-200 bg-white">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
@@ -256,14 +259,14 @@ function SitePanel({ data, siteId, accent, canManage, onChange }: { data: StoreD
         </details> : null}
 
         <div className="grid gap-3">
-          {buildings.map((building) => <BuildingPanel key={building.id} data={data} buildingId={building.id} canManage={canManage} onChange={onChange} />)}
+          {buildings.map((building) => <BuildingPanel key={building.id} data={data} buildingId={building.id} canManage={canManage} canShare={canShare} onChange={onChange} />)}
         </div>
       </div>
     </details>
   );
 }
 
-function BuildingPanel({ data, buildingId, canManage, onChange }: { data: StoreData; buildingId: string; canManage: boolean; onChange: (data: StoreData) => void }) {
+function BuildingPanel({ data, buildingId, canManage, canShare, onChange }: { data: StoreData; buildingId: string; canManage: boolean; canShare: boolean; onChange: (data: StoreData) => void }) {
   const building = data.buildings.find((item) => item.id === buildingId)!;
   const rooms = data.rooms.filter((room) => room.building_id === building.id);
   const assetCount = data.assets.filter((asset) => asset.building_id === building.id).length;
@@ -342,7 +345,7 @@ function BuildingPanel({ data, buildingId, canManage, onChange }: { data: StoreD
           </form>
         ) : null}
 
-        <details className="group/share rounded-[8px] border border-zinc-200 bg-white">
+        {canShare ? <details className="group/share rounded-[8px] border border-zinc-200 bg-white">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
             Share {building.name}
             <ChevronDown className="transition group-open/share:rotate-180" size={17} />
@@ -350,7 +353,7 @@ function BuildingPanel({ data, buildingId, canManage, onChange }: { data: StoreD
           <div className="border-t border-zinc-100 p-3">
             <ExportRegisterButton data={data} compact buildingId={building.id} filenamePrefix={`${building.name} asset register`} />
           </div>
-        </details>
+        </details> : null}
 
         {canManage ? <details className="group/add rounded-[8px] border border-zinc-200 bg-white">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">

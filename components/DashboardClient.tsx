@@ -13,7 +13,7 @@ import { useStoreData } from "@/lib/useStoreData";
 type AssetFilter = "installed" | "all" | "issues";
 
 export function DashboardClient() {
-  const [data, setData] = useStoreData();
+  const [data, setData, isSupabaseMode, workspace] = useStoreData();
   const [query, setQuery] = useState("");
   const [assetFilter, setAssetFilter] = useState<AssetFilter>("installed");
   const assets = getAssetViews(data);
@@ -32,6 +32,7 @@ export function DashboardClient() {
   const installed = assets.filter((asset) => asset.status === "installed").length;
   const issues = assets.filter((asset) => asset.status === "damaged").length;
   const listTitle = query ? "Matches" : assetFilter === "all" ? "All assets" : assetFilter === "issues" ? "Issues" : "Installed assets";
+  const canAddAssets = !isSupabaseMode || workspace?.role === "admin" || (workspace?.editableSiteIds?.length ?? 0) > 0;
 
   function handleReset() {
     resetStore();
@@ -58,9 +59,11 @@ export function DashboardClient() {
             </div>
           </div>
           <div className="grid gap-3">
-            <div className="pulse-soft rounded-[8px]">
-              <ButtonLink href="/assets/new" icon={Camera}>Quick Add Asset</ButtonLink>
-            </div>
+            {canAddAssets ? (
+              <div className="pulse-soft rounded-[8px]">
+                <ButtonLink href="/assets/new" icon={Camera}>Quick Add Asset</ButtonLink>
+              </div>
+            ) : null}
             <div className="grid grid-cols-2 gap-3">
               <ButtonLink href="/sites" icon={MapPinned} variant="secondary">Sites</ButtonLink>
               <ButtonLink href="/search" icon={Search} variant="secondary">Find</ButtonLink>
@@ -78,7 +81,7 @@ export function DashboardClient() {
         <section className="grid gap-3">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-xl font-semibold tracking-tight">{listTitle}</h2>
-            <ButtonLink href="/assets/new" icon={Plus} variant="secondary">Add</ButtonLink>
+            {canAddAssets ? <ButtonLink href="/assets/new" icon={Plus} variant="secondary">Add</ButtonLink> : null}
           </div>
           <div className="overflow-hidden rounded-[8px] border border-zinc-200 bg-white shadow-panel">
             {results.length ? (

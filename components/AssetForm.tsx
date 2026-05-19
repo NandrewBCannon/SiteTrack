@@ -19,7 +19,13 @@ export function AssetForm({ assetId }: { assetId?: string }) {
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [data, setData, isSupabaseMode, workspace] = useStoreData();
   const existing = assetId ? data.assets.find((asset) => asset.id === assetId) : undefined;
-  const firstSite = data.sites[0];
+  const editableSiteIds = workspace?.editableSiteIds;
+  const canEditAllSites = !isSupabaseMode || workspace?.role === "admin";
+  const editableSites = useMemo(
+    () => canEditAllSites ? data.sites : data.sites.filter((site) => editableSiteIds?.includes(site.id)),
+    [canEditAllSites, data.sites, editableSiteIds]
+  );
+  const firstSite = editableSites[0];
   const firstBuilding = data.buildings.find((building) => building.site_id === firstSite?.id) ?? data.buildings[0];
   const firstRoom = data.rooms.find((room) => room.building_id === firstBuilding?.id) ?? data.rooms[0];
   const [photoUrl, setPhotoUrl] = useState("");
@@ -72,10 +78,10 @@ export function AssetForm({ assetId }: { assetId?: string }) {
   }, [assetId, existing]);
 
   useEffect(() => {
-    if (assetId || !data.sites.length) return;
+    if (assetId || !editableSites.length) return;
 
     setDraft((current) => {
-      const site = data.sites.find((item) => item.id === current.site_id) ?? data.sites[0];
+      const site = editableSites.find((item) => item.id === current.site_id) ?? editableSites[0];
       const availableBuildings = data.buildings.filter((item) => item.site_id === site.id);
       const building = availableBuildings.find((item) => item.id === current.building_id) ?? availableBuildings[0];
       const availableRooms = building ? data.rooms.filter((item) => item.building_id === building.id) : [];
@@ -92,11 +98,12 @@ export function AssetForm({ assetId }: { assetId?: string }) {
         room_id: room?.id ?? ""
       };
     });
-  }, [assetId, data.buildings, data.rooms, data.sites]);
+  }, [assetId, data.buildings, data.rooms, editableSites]);
 
   const buildings = useMemo(() => data.buildings.filter((building) => building.site_id === draft.site_id), [data.buildings, draft.site_id]);
   const rooms = useMemo(() => data.rooms.filter((room) => room.building_id === draft.building_id), [data.rooms, draft.building_id]);
   const preview = draft.id ? assetToView({ ...draft, created_at: existing?.created_at ?? "", updated_at: existing?.updated_at ?? "" }, data) : undefined;
+  const canEditCurrentAsset = !isSupabaseMode || canEditAllSites || (!!draft.site_id && editableSiteIds?.includes(draft.site_id));
 
   function update<K extends keyof AssetDraft>(key: K, value: AssetDraft[K]) {
     setDraft((current) => {
@@ -123,6 +130,10 @@ export function AssetForm({ assetId }: { assetId?: string }) {
     }
     if (!draft.asset_number || !draft.item_name || !draft.site_id || !draft.building_id || !draft.room_id) {
       setError("Asset number, item name, site, building, and room are required.");
+      return;
+    }
+    if (isSupabaseMode && !canEditCurrentAsset) {
+      setError("Your role can view this job site, but cannot add or edit assets here.");
       return;
     }
     try {
@@ -186,11 +197,13 @@ export function AssetForm({ assetId }: { assetId?: string }) {
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
-      {isSupabaseMode && workspace && !data.sites.length ? (
+      {isSupabaseMode && workspace && (!data.sites.length || !editableSites.length) ? (
         <section className="rounded-[8px] border border-amber-200 bg-amber-50 p-5 text-amber-900 shadow-panel lg:col-span-2">
-          <h1 className="text-xl font-semibold tracking-tight">No job-site access yet</h1>
+          <h1 className="text-xl font-semibold tracking-tight">{data.sites.length ? "View-only access" : "No job-site access yet"}</h1>
           <p className="mt-2 text-sm leading-6">
-            Your account is signed into {workspace.name}, but no job sites have been granted to you yet. Ask a workspace admin to add you to a job site before adding assets.
+            {data.sites.length
+              ? `Your account can view ${workspace.name} job-site data, but this role cannot add or edit assets.`
+              : `Your account is signed into ${workspace.name}, but no job sites have been granted to you yet. Ask an admin or manager to add you to a job site before adding assets.`}
           </p>
         </section>
       ) : null}
@@ -202,7 +215,7 @@ export function AssetForm({ assetId }: { assetId?: string }) {
               <h1 className="mt-3 text-3xl font-semibold tracking-tight">{existing ? "Edit asset" : "Add asset"}</h1>
               <p className="mt-1 text-sm text-white/80">Core details first. Everything else can stay tucked away.</p>
           </div>
-            <button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] bg-white px-4 text-sm font-semibold text-ink shadow-panel transition hover:-translate-y-0.5">
+            <button disabled={isSupabaseMode && !canEditCurrentAsset} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] bg-white px-4 text-sm font-semibold text-ink shadow-panel transition hover:-translate-y-0.5 disabled:opacity-50">
             <Save size={17} />
               Save
           </button>
@@ -226,7 +239,7 @@ export function AssetForm({ assetId }: { assetId?: string }) {
             <div className="grid gap-3 sm:grid-cols-3">
               <Field label="Site">
                 <select className={inputClass} value={draft.site_id} onChange={(e) => update("site_id", e.target.value)}>
-                  {data.sites.length ? data.sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>) : <option value="">No sites available</option>}
+                  {editableSites.length ? editableSites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>) : <option value="">No editable sites available</option>}
                 </select>
               </Field>
               <Field label="Building">

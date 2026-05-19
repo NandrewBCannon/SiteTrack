@@ -1,6 +1,7 @@
 "use client";
 
 import { supabase } from "@/lib/supabase";
+import { canEditAssets, canManageJobSiteAccess } from "@/lib/roles";
 import type { Asset, AssetLog, AssetPhoto, AssetStatus, Building, Room, Site, StoreData } from "@/lib/types";
 
 const activeWorkspaceKey = "sitetrack-active-workspace-id";
@@ -10,6 +11,8 @@ export type WorkspaceSummary = {
   name: string;
   role?: string;
   join_code?: string;
+  editableSiteIds?: string[];
+  manageableSiteIds?: string[];
 };
 
 export type SupabaseStoreResult = {
@@ -76,11 +79,18 @@ export async function loadSupabaseStore(): Promise<SupabaseStoreResult> {
   const isAdmin = workspace.role === "admin";
   const { data: userSiteMemberships, error: userSiteMembershipError } = await supabase
     .from("site_members")
-    .select("site_id")
+    .select("site_id, role")
     .eq("user_id", userId);
   if (userSiteMembershipError) throw userSiteMembershipError;
 
   const assignedSiteIds = Array.from(new Set((userSiteMemberships ?? []).map((membership: any) => membership.site_id).filter(Boolean)));
+  const editableSiteIds = isAdmin
+    ? []
+    : Array.from(new Set((userSiteMemberships ?? []).filter((membership: any) => canEditAssets(membership.role)).map((membership: any) => membership.site_id).filter(Boolean)));
+  const manageableSiteIds = isAdmin
+    ? []
+    : Array.from(new Set((userSiteMemberships ?? []).filter((membership: any) => canManageJobSiteAccess(membership.role)).map((membership: any) => membership.site_id).filter(Boolean)));
+  const activeWorkspace = { ...workspace, editableSiteIds, manageableSiteIds };
 
   const sitesQuery = supabase.from("sites").select("*").order("created_at", { ascending: false });
   const scopedSitesQuery = isAdmin
@@ -137,7 +147,7 @@ export async function loadSupabaseStore(): Promise<SupabaseStoreResult> {
       asset_photos: (photosResult.data ?? []).map(mapPhoto).filter((photo) => assetIds.has(photo.asset_id)),
       asset_logs: (logsResult.data ?? []).map(mapLog).filter((log) => assetIds.has(log.asset_id))
     },
-    workspace,
+    workspace: activeWorkspace,
     workspaces
   };
 }

@@ -5,6 +5,7 @@
 -- sites granted through site_members.
 -- Per the security review rule: no client-side trust and no broad authenticated
 -- table access. Workspace membership alone is not job-site membership.
+-- Existing databases must run supabase/add_manager_role.sql once before this file.
 
 alter table workspaces enable row level security;
 alter table workspace_members enable row level security;
@@ -109,6 +110,30 @@ as '
   );
 ';
 
+create or replace function can_manage_site_access(target_site_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as '
+  select exists (
+    select 1
+    from sites
+    where sites.id = target_site_id
+      and (
+        has_workspace_role(sites.workspace_id, array[''admin'']::workspace_role[])
+        or exists (
+          select 1
+          from site_members
+          where site_members.site_id = target_site_id
+            and site_members.user_id = auth.uid()
+            and site_members.role in (''admin'', ''manager'')
+        )
+      )
+  );
+';
+
 create or replace function can_edit_assets_on_site(target_site_id uuid)
 returns boolean
 language sql
@@ -127,7 +152,7 @@ as '
           from site_members
           where site_members.site_id = target_site_id
             and site_members.user_id = auth.uid()
-            and site_members.role in (''admin'', ''technician'')
+            and site_members.role in (''admin'', ''manager'', ''technician'')
         )
       )
   );
@@ -198,7 +223,18 @@ drop policy if exists "Admins can manage workspace members" on workspace_members
 drop policy if exists "Users can leave workspace" on workspace_members;
 create policy "Members can read own workspace membership"
 on workspace_members for select to authenticated
-using (user_id = auth.uid() or has_workspace_role(workspace_id, array['admin']::workspace_role[]));
+using (
+  user_id = auth.uid()
+  or has_workspace_role(workspace_id, array['admin']::workspace_role[])
+  or exists (
+    select 1
+    from sites
+    join site_members on site_members.site_id = sites.id
+    where sites.workspace_id = workspace_members.workspace_id
+      and site_members.user_id = auth.uid()
+      and site_members.role in ('admin', 'manager')
+  )
+);
 create policy "Admins can manage workspace members"
 on workspace_members for all to authenticated
 using (has_workspace_role(workspace_id, array['admin']::workspace_role[]))
@@ -210,23 +246,37 @@ using (user_id = auth.uid() and role <> 'admin');
 drop policy if exists "Members can read site members" on site_members;
 drop policy if exists "Users can read own site memberships" on site_members;
 drop policy if exists "Admins can manage site members" on site_members;
+drop policy if exists "Admins and managers can manage site members" on site_members;
 drop policy if exists "Users can leave job sites" on site_members;
 create policy "Users can read own site memberships"
 on site_members for select to authenticated
-using (user_id = auth.uid() or can_admin_site(site_id));
-create policy "Admins can manage site members"
+using (user_id = auth.uid() or can_manage_site_access(site_id));
+create policy "Admins and managers can manage site members"
 on site_members for all to authenticated
-using (can_admin_site(site_id))
-with check (can_admin_site(site_id));
+using (
+  can_admin_site(site_id)
+  or (can_manage_site_access(site_id) and role <> 'admin')
+)
+with check (
+  can_admin_site(site_id)
+  or (can_manage_site_access(site_id) and role <> 'admin')
+);
 create policy "Users can leave job sites"
 on site_members for delete to authenticated
 using (user_id = auth.uid());
 
 drop policy if exists "Admins can manage invites" on invites;
-create policy "Admins can manage invites"
+drop policy if exists "Admins and managers can manage invites" on invites;
+create policy "Admins and managers can manage invites"
 on invites for all to authenticated
-using (has_workspace_role(workspace_id, array['admin']::workspace_role[]))
-with check (has_workspace_role(workspace_id, array['admin']::workspace_role[]));
+using (
+  has_workspace_role(workspace_id, array['admin']::workspace_role[])
+  or (site_id is not null and can_manage_site_access(site_id) and role <> 'admin')
+)
+with check (
+  has_workspace_role(workspace_id, array['admin']::workspace_role[])
+  or (site_id is not null and can_manage_site_access(site_id) and role <> 'admin')
+);
 
 drop policy if exists "Members can read sites" on sites;
 drop policy if exists "Admins and assigned users can read sites" on sites;
@@ -377,6 +427,7 @@ revoke execute on function public.add_workspace_creator_as_admin() from anon, au
 revoke execute on function public.assert_asset_location_scope() from anon, authenticated, public;
 revoke execute on function public.can_access_site(uuid) from anon, public;
 revoke execute on function public.can_admin_site(uuid) from anon, public;
+revoke execute on function public.can_manage_site_access(uuid) from anon, public;
 revoke execute on function public.can_edit_assets_on_site(uuid) from anon, public;
 revoke execute on function public.has_workspace_role(uuid, workspace_role[]) from anon, public;
 revoke execute on function public.is_workspace_member(uuid) from anon, public;
@@ -394,6 +445,7 @@ grant execute on function public.join_workspace_with_code(text) to authenticated
 grant execute on function public.regenerate_workspace_join_code(uuid) to authenticated;
 grant execute on function public.can_access_site(uuid) to authenticated;
 grant execute on function public.can_admin_site(uuid) to authenticated;
+grant execute on function public.can_manage_site_access(uuid) to authenticated;
 grant execute on function public.can_edit_assets_on_site(uuid) to authenticated;
 grant execute on function public.has_workspace_role(uuid, workspace_role[]) to authenticated;
 grant execute on function public.is_workspace_member(uuid) to authenticated;

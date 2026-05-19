@@ -1,15 +1,19 @@
 -- Workforce / multi-tenant migration for the hosted version of SiteTrack.
 -- Run this after supabase/schema.sql when you are ready to move from local MVP
 -- data into authenticated workspaces, members, and job-site invites.
+-- Existing databases that already have workspace_role must run
+-- supabase/add_manager_role.sql before rerunning this file.
 
 create extension if not exists "pgcrypto";
 
 do $$
 begin
   if not exists (select 1 from pg_type where typname = 'workspace_role') then
-    create type workspace_role as enum ('admin', 'technician', 'viewer');
+    create type workspace_role as enum ('admin', 'manager', 'technician', 'viewer');
   end if;
 end $$;
+
+alter type workspace_role add value if not exists 'manager';
 
 create table if not exists workspaces (
   id uuid primary key default gen_random_uuid(),
@@ -143,7 +147,7 @@ as $$
     from sites
     where sites.id = target_site_id
       and (
-        is_workspace_member(sites.workspace_id)
+        has_workspace_role(sites.workspace_id, array['admin']::workspace_role[])
         or exists (
           select 1
           from site_members
@@ -178,6 +182,30 @@ as $$
   );
 $$;
 
+create or replace function can_manage_site_access(target_site_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from sites
+    where sites.id = target_site_id
+      and (
+        has_workspace_role(sites.workspace_id, array['admin']::workspace_role[])
+        or exists (
+          select 1
+          from site_members
+          where site_members.site_id = target_site_id
+            and site_members.user_id = auth.uid()
+            and site_members.role in ('admin', 'manager')
+        )
+      )
+  );
+$$;
+
 create or replace function can_edit_assets_on_site(target_site_id uuid)
 returns boolean
 language sql
@@ -190,13 +218,13 @@ as $$
     from sites
     where sites.id = target_site_id
       and (
-        has_workspace_role(sites.workspace_id, array['admin', 'technician']::workspace_role[])
+        has_workspace_role(sites.workspace_id, array['admin']::workspace_role[])
         or exists (
           select 1
           from site_members
           where site_members.site_id = target_site_id
             and site_members.user_id = auth.uid()
-            and site_members.role in ('admin', 'technician')
+            and site_members.role in ('admin', 'manager', 'technician')
         )
       )
   );
@@ -265,16 +293,39 @@ create policy "Admins can delete workspaces" on workspaces for delete to authent
 
 drop policy if exists "Members can read workspace members" on workspace_members;
 drop policy if exists "Admins can manage workspace members" on workspace_members;
-create policy "Members can read workspace members" on workspace_members for select to authenticated using (is_workspace_member(workspace_id));
+create policy "Members can read workspace members" on workspace_members for select to authenticated using (
+  user_id = auth.uid()
+  or has_workspace_role(workspace_id, array['admin']::workspace_role[])
+  or exists (
+    select 1
+    from sites
+    join site_members on site_members.site_id = sites.id
+    where sites.workspace_id = workspace_members.workspace_id
+      and site_members.user_id = auth.uid()
+      and site_members.role in ('admin', 'manager')
+  )
+);
 create policy "Admins can manage workspace members" on workspace_members for all to authenticated using (has_workspace_role(workspace_id, array['admin']::workspace_role[])) with check (has_workspace_role(workspace_id, array['admin']::workspace_role[]));
 
 drop policy if exists "Members can read site members" on site_members;
 drop policy if exists "Admins can manage site members" on site_members;
 create policy "Members can read site members" on site_members for select to authenticated using (can_access_site(site_id));
-create policy "Admins can manage site members" on site_members for all to authenticated using (can_admin_site(site_id)) with check (can_admin_site(site_id));
+create policy "Admins can manage site members" on site_members for all to authenticated using (
+  can_admin_site(site_id)
+  or (can_manage_site_access(site_id) and role <> 'admin')
+) with check (
+  can_admin_site(site_id)
+  or (can_manage_site_access(site_id) and role <> 'admin')
+);
 
 drop policy if exists "Admins can manage invites" on invites;
-create policy "Admins can manage invites" on invites for all to authenticated using (has_workspace_role(workspace_id, array['admin']::workspace_role[])) with check (has_workspace_role(workspace_id, array['admin']::workspace_role[]));
+create policy "Admins can manage invites" on invites for all to authenticated using (
+  has_workspace_role(workspace_id, array['admin']::workspace_role[])
+  or (site_id is not null and can_manage_site_access(site_id) and role <> 'admin')
+) with check (
+  has_workspace_role(workspace_id, array['admin']::workspace_role[])
+  or (site_id is not null and can_manage_site_access(site_id) and role <> 'admin')
+);
 
 drop policy if exists "Members can read sites" on sites;
 drop policy if exists "Admins can insert sites" on sites;

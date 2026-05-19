@@ -22,11 +22,10 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { inputClass } from "@/components/Field";
+import { canManageJobSiteAccess, canManageWorkspace, roles, type Role } from "@/lib/roles";
 import { supabase } from "@/lib/supabase";
 import { loadSupabaseStore, setActiveWorkspaceId, type WorkspaceSummary } from "@/lib/supabaseStore";
 import type { Site, StoreData } from "@/lib/types";
-
-type Role = "admin" | "technician" | "viewer";
 
 type WorkspaceMember = {
   id: string;
@@ -74,8 +73,6 @@ const emptyStore: StoreData = {
   asset_logs: []
 };
 
-const roles: Role[] = ["admin", "technician", "viewer"];
-
 export function AccountClient() {
   const { isConfigured, user, signOut } = useAuth();
   const [data, setData] = useState<AccountData>({
@@ -111,19 +108,33 @@ export function AccountClient() {
         }
       }
 
+      const ownSiteMembersResult = siteIds.length
+        ? await supabase!.from("site_members").select("*").in("site_id", siteIds).eq("user_id", user.id).order("created_at", { ascending: true })
+        : { data: [], error: null };
+      if (ownSiteMembersResult.error) throw ownSiteMembersResult.error;
+
+      const managedSiteIds = (ownSiteMembersResult.data ?? [])
+        .filter((member: any) => canManageJobSiteAccess(member.role))
+        .map((member: any) => member.site_id);
+      const canManageSomeSite = activeWorkspace?.role === "admin" || managedSiteIds.length > 0;
+
       const [membersResult, siteMembersResult, invitesResult] = await Promise.all([
-        workspaceId && activeWorkspace?.role === "admin"
+        workspaceId && canManageSomeSite
           ? supabase!.from("workspace_members").select("*").eq("workspace_id", workspaceId).order("created_at", { ascending: true })
           : workspaceId
             ? supabase!.from("workspace_members").select("*").eq("workspace_id", workspaceId).eq("user_id", user.id).order("created_at", { ascending: true })
             : Promise.resolve({ data: [], error: null }),
         siteIds.length && activeWorkspace?.role === "admin"
           ? supabase!.from("site_members").select("*").in("site_id", siteIds).order("created_at", { ascending: true })
+          : managedSiteIds.length
+            ? supabase!.from("site_members").select("*").in("site_id", managedSiteIds).order("created_at", { ascending: true })
           : siteIds.length
             ? supabase!.from("site_members").select("*").in("site_id", siteIds).eq("user_id", user.id).order("created_at", { ascending: true })
             : Promise.resolve({ data: [], error: null }),
         workspaceId && activeWorkspace?.role === "admin"
           ? supabase!.from("invites").select("*").eq("workspace_id", workspaceId).order("created_at", { ascending: false })
+          : managedSiteIds.length
+            ? supabase!.from("invites").select("*").in("site_id", managedSiteIds).order("created_at", { ascending: false })
           : Promise.resolve({ data: [], error: null })
       ]);
 
@@ -164,7 +175,13 @@ export function AccountClient() {
     return email.slice(0, 2).toUpperCase();
   }, [user]);
 
-  const isAdmin = data.activeWorkspace?.role === "admin";
+  const isAdmin = canManageWorkspace(data.activeWorkspace?.role);
+  const manageableSiteIds = data.activeWorkspace?.role === "admin"
+    ? data.store.sites.map((site) => site.id)
+    : data.siteMembers
+      .filter((member) => member.user_id === user?.id && canManageJobSiteAccess(member.role))
+      .map((member) => member.site_id);
+  const canManageSiteAccess = isAdmin || manageableSiteIds.length > 0;
 
   async function sendResetEmail() {
     if (!supabase || !user?.email) return;
@@ -292,13 +309,13 @@ export function AccountClient() {
             )}
           </section>
           <aside className="grid content-start gap-5">
-            {isAdmin ? (
+            {canManageSiteAccess ? (
               <JobSiteAccessCard
                 currentUserId={user.id}
-                isAdmin={isAdmin}
+                canGrantAdmin={isAdmin}
                 selectedSiteId={selectedSiteId}
                 onSelectSite={setSelectedSiteId}
-                sites={data.store.sites}
+                sites={isAdmin ? data.store.sites : data.store.sites.filter((site) => manageableSiteIds.includes(site.id))}
                 workspaceMembers={data.workspaceMembers}
                 siteMembers={data.siteMembers}
                 invites={data.invites.filter((invite) => !!invite.site_id)}
@@ -628,7 +645,7 @@ function MemberWorkspaceCard({
 
 function JobSiteAccessCard({
   currentUserId,
-  isAdmin,
+  canGrantAdmin,
   selectedSiteId,
   onSelectSite,
   sites,
@@ -641,7 +658,7 @@ function JobSiteAccessCard({
   onError
 }: {
   currentUserId: string;
-  isAdmin: boolean;
+  canGrantAdmin: boolean;
   selectedSiteId: string;
   onSelectSite: (siteId: string) => void;
   sites: Site[];
@@ -659,6 +676,7 @@ function JobSiteAccessCard({
   const selectedSite = sites.find((site) => site.id === selectedSiteId) ?? sites[0];
   const selectedSiteMembers = selectedSite ? siteMembers.filter((member) => member.site_id === selectedSite.id) : [];
   const selectedInvites = selectedSite ? invites.filter((invite) => invite.site_id === selectedSite.id) : [];
+  const grantableRoles = canGrantAdmin ? roles : roles.filter((item) => item !== "admin");
 
   async function addExistingMember(event: React.FormEvent) {
     event.preventDefault();
@@ -736,12 +754,12 @@ function JobSiteAccessCard({
               <div key={member.id} className="grid gap-2 rounded-[8px] bg-zinc-50 p-3">
                 <p className="truncate text-sm font-semibold text-ink">{member.user_id === currentUserId ? "You" : `User ${member.user_id.slice(0, 8)}`}</p>
                 <div className="grid grid-cols-[1fr_40px] gap-2">
-                  <select className={inputClass} value={member.role} disabled={!isAdmin} onChange={(event) => void updateSiteRole(member.id, event.target.value as Role)}>
-                    {roles.map((item) => <option key={item} value={item}>{item}</option>)}
+                  <select className={inputClass} value={member.role} disabled={!canGrantAdmin && member.role === "admin"} onChange={(event) => void updateSiteRole(member.id, event.target.value as Role)}>
+                    {(member.role === "admin" && !canGrantAdmin ? roles : grantableRoles).map((item) => <option key={item} value={item}>{item}</option>)}
                   </select>
                   <button
                     type="button"
-                    disabled={!isAdmin}
+                    disabled={!canGrantAdmin && member.role === "admin"}
                     onClick={() => void removeSiteMember(member.id)}
                     className="inline-flex h-11 items-center justify-center rounded-[8px] bg-white text-rose-700 shadow-sm disabled:opacity-40"
                     aria-label="Remove site member"
@@ -755,34 +773,30 @@ function JobSiteAccessCard({
             )}
           </div>
 
-          {isAdmin ? (
-            <>
-              <form onSubmit={addExistingMember} className="grid gap-2 rounded-[8px] border border-zinc-200 p-3">
-                <p className="text-sm font-semibold text-ink">Add existing workspace user</p>
-                <select className={inputClass} value={memberUserId} onChange={(event) => setMemberUserId(event.target.value)} required>
-                  <option value="">Choose user</option>
-                  {workspaceMembers.map((member) => (
-                    <option key={member.id} value={member.user_id}>
-                      {member.user_id === currentUserId ? "You" : `User ${member.user_id.slice(0, 8)}`} | {member.role}
-                    </option>
-                  ))}
-                </select>
-                <select className={inputClass} value={role} onChange={(event) => setRole(event.target.value as Role)}>
-                  {roles.map((item) => <option key={item} value={item}>{item}</option>)}
-                </select>
-                <button className="inline-flex min-h-11 items-center justify-center rounded-[8px] bg-ink px-3 text-sm font-semibold text-white">Add Access</button>
-              </form>
+          <form onSubmit={addExistingMember} className="grid gap-2 rounded-[8px] border border-zinc-200 p-3">
+            <p className="text-sm font-semibold text-ink">Add existing workspace user</p>
+            <select className={inputClass} value={memberUserId} onChange={(event) => setMemberUserId(event.target.value)} required>
+              <option value="">Choose user</option>
+              {workspaceMembers.map((member) => (
+                <option key={member.id} value={member.user_id}>
+                  {member.user_id === currentUserId ? "You" : `User ${member.user_id.slice(0, 8)}`} | {member.role}
+                </option>
+              ))}
+            </select>
+            <select className={inputClass} value={role} onChange={(event) => setRole(event.target.value as Role)}>
+              {grantableRoles.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <button className="inline-flex min-h-11 items-center justify-center rounded-[8px] bg-ink px-3 text-sm font-semibold text-white">Add Access</button>
+          </form>
 
-              <form onSubmit={inviteToSite} className="grid gap-2 rounded-[8px] border border-zinc-200 p-3">
-                <p className="text-sm font-semibold text-ink">Invite by email to this job site</p>
-                <input className={inputClass} type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="user@company.com" required />
-                <select className={inputClass} value={role} onChange={(event) => setRole(event.target.value as Role)}>
-                  {roles.map((item) => <option key={item} value={item}>{item}</option>)}
-                </select>
-                <button className="inline-flex min-h-11 items-center justify-center rounded-[8px] bg-ink px-3 text-sm font-semibold text-white">Invite to Site</button>
-              </form>
-            </>
-          ) : null}
+          <form onSubmit={inviteToSite} className="grid gap-2 rounded-[8px] border border-zinc-200 p-3">
+            <p className="text-sm font-semibold text-ink">Invite by email to this job site</p>
+            <input className={inputClass} type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="user@company.com" required />
+            <select className={inputClass} value={role} onChange={(event) => setRole(event.target.value as Role)}>
+              {grantableRoles.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <button className="inline-flex min-h-11 items-center justify-center rounded-[8px] bg-ink px-3 text-sm font-semibold text-white">Invite to Site</button>
+          </form>
 
           <PendingInvites invites={selectedInvites} emptyText="No pending job-site invites." onMessage={onMessage} onError={onError} />
         </div>

@@ -22,6 +22,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [syncError, setSyncError] = useState("");
   const [syncStatus, setSyncStatus] = useState("");
   const [hasWorkspace, setHasWorkspace] = useState<boolean | null>(null);
+  const [canAddAssets, setCanAddAssets] = useState(true);
 
   useEffect(() => {
     function onSyncError(event: Event) {
@@ -47,15 +48,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     async function checkWorkspace() {
       if (!isConfigured || !user || isSetupRoute) {
         setHasWorkspace(null);
+        setCanAddAssets(true);
         return;
       }
 
       setHasWorkspace(null);
       try {
         const result = await loadSupabaseStore();
-        if (!cancelled) setHasWorkspace(Boolean(result.workspace));
+        if (!cancelled) {
+          setHasWorkspace(Boolean(result.workspace));
+          setCanAddAssets(Boolean(result.workspace && (result.workspace.role === "admin" || (result.workspace.editableSiteIds?.length ?? 0) > 0)));
+        }
       } catch {
-        if (!cancelled) setHasWorkspace(false);
+        if (!cancelled) {
+          setHasWorkspace(false);
+          setCanAddAssets(false);
+        }
       }
     }
 
@@ -68,6 +76,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   function goTo(href: string) {
     window.location.assign(href);
   }
+
+  const visibleNavItems = navItems.filter((item) => item.href !== "/assets/new" || canAddAssets);
 
   return (
     <div className="min-h-screen pb-24 md:pb-0">
@@ -83,7 +93,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </Link>
           <nav className="hidden items-center gap-1 rounded-[8px] bg-zinc-100 p-1 md:flex">
-            {navItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const Icon = item.icon;
               const active = pathname === item.href;
               return (
@@ -199,8 +209,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
       </main>
       <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-zinc-200 bg-white/90 px-2 py-2 backdrop-blur-xl md:hidden">
-        <div className="grid grid-cols-4 gap-1">
-          {navItems.map((item) => {
+        <div className={`grid gap-1 ${visibleNavItems.length === 3 ? "grid-cols-3" : "grid-cols-4"}`}>
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href;
             return (

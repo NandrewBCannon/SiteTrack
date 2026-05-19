@@ -45,7 +45,7 @@ as '
     from sites
     where sites.id = target_site_id
       and (
-        is_workspace_member(sites.workspace_id)
+        has_workspace_role(sites.workspace_id, array[''admin'']::workspace_role[])
         or exists (
           select 1
           from site_members
@@ -80,6 +80,30 @@ as '
   );
 ';
 
+create or replace function can_manage_site_access(target_site_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as '
+  select exists (
+    select 1
+    from sites
+    where sites.id = target_site_id
+      and (
+        has_workspace_role(sites.workspace_id, array[''admin'']::workspace_role[])
+        or exists (
+          select 1
+          from site_members
+          where site_members.site_id = target_site_id
+            and site_members.user_id = auth.uid()
+            and site_members.role in (''admin'', ''manager'')
+        )
+      )
+  );
+';
+
 create or replace function can_edit_assets_on_site(target_site_id uuid)
 returns boolean
 language sql
@@ -92,13 +116,13 @@ as '
     from sites
     where sites.id = target_site_id
       and (
-        has_workspace_role(sites.workspace_id, array[''admin'', ''technician'']::workspace_role[])
+        has_workspace_role(sites.workspace_id, array[''admin'']::workspace_role[])
         or exists (
           select 1
           from site_members
           where site_members.site_id = target_site_id
             and site_members.user_id = auth.uid()
-            and site_members.role in (''admin'', ''technician'')
+            and site_members.role in (''admin'', ''manager'', ''technician'')
         )
       )
   );
