@@ -70,6 +70,29 @@ export function AssetForm({ assetId }: { assetId?: string }) {
     });
   }, [assetId, existing]);
 
+  useEffect(() => {
+    if (assetId || !data.sites.length) return;
+
+    setDraft((current) => {
+      const site = data.sites.find((item) => item.id === current.site_id) ?? data.sites[0];
+      const availableBuildings = data.buildings.filter((item) => item.site_id === site.id);
+      const building = availableBuildings.find((item) => item.id === current.building_id) ?? availableBuildings[0];
+      const availableRooms = building ? data.rooms.filter((item) => item.building_id === building.id) : [];
+      const room = availableRooms.find((item) => item.id === current.room_id) ?? availableRooms[0];
+
+      if (site.id === current.site_id && (building?.id ?? "") === current.building_id && (room?.id ?? "") === current.room_id) {
+        return current;
+      }
+
+      return {
+        ...current,
+        site_id: site.id,
+        building_id: building?.id ?? "",
+        room_id: room?.id ?? ""
+      };
+    });
+  }, [assetId, data.buildings, data.rooms, data.sites]);
+
   const buildings = useMemo(() => data.buildings.filter((building) => building.site_id === draft.site_id), [data.buildings, draft.site_id]);
   const rooms = useMemo(() => data.rooms.filter((room) => room.building_id === draft.building_id), [data.rooms, draft.building_id]);
   const preview = draft.id ? assetToView({ ...draft, created_at: existing?.created_at ?? "", updated_at: existing?.updated_at ?? "" }, data) : undefined;
@@ -184,17 +207,17 @@ export function AssetForm({ assetId }: { assetId?: string }) {
             <div className="grid gap-3 sm:grid-cols-3">
               <Field label="Site">
                 <select className={inputClass} value={draft.site_id} onChange={(e) => update("site_id", e.target.value)}>
-                  {data.sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
+                  {data.sites.length ? data.sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>) : <option value="">No sites available</option>}
                 </select>
               </Field>
               <Field label="Building">
-                <select className={inputClass} value={draft.building_id} onChange={(e) => update("building_id", e.target.value)}>
-                  {buildings.map((building) => <option key={building.id} value={building.id}>{building.name}</option>)}
+                <select className={inputClass} value={draft.building_id} onChange={(e) => update("building_id", e.target.value)} disabled={!buildings.length}>
+                  {buildings.length ? buildings.map((building) => <option key={building.id} value={building.id}>{building.name}</option>) : <option value="">No buildings for this site</option>}
                 </select>
               </Field>
               <Field label="Room">
-                <select className={inputClass} value={draft.room_id} onChange={(e) => update("room_id", e.target.value)}>
-                  {rooms.map((room) => <option key={room.id} value={room.id}>{room.room_number} | {room.room_name}</option>)}
+                <select className={inputClass} value={draft.room_id} onChange={(e) => update("room_id", e.target.value)} disabled={!rooms.length}>
+                  {rooms.length ? rooms.map((room) => <option key={room.id} value={room.id}>{room.room_number} | {room.room_name}</option>) : <option value="">No rooms for this building</option>}
                 </select>
               </Field>
             </div>

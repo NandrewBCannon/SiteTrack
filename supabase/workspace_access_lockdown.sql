@@ -3,6 +3,8 @@
 -- This removes the original MVP-wide authenticated policies and makes job-site
 -- access explicit: admins see all sites in a workspace, joined users only see
 -- sites granted through site_members.
+-- Per the security review rule: no client-side trust and no broad authenticated
+-- table access. Workspace membership alone is not job-site membership.
 
 drop policy if exists "Authenticated users can manage sites" on sites;
 drop policy if exists "Authenticated users can manage buildings" on buildings;
@@ -70,7 +72,7 @@ as '
     from sites
     where sites.id = target_site_id
       and (
-        has_workspace_role(sites.workspace_id, array[''admin'', ''technician'']::workspace_role[])
+        has_workspace_role(sites.workspace_id, array[''admin'']::workspace_role[])
         or exists (
           select 1
           from site_members
@@ -165,4 +167,35 @@ with check (can_edit_assets_on_site(site_id));
 create policy "Admins can delete assets"
 on assets for delete to authenticated
 using (can_admin_site(site_id));
+
+create or replace function join_workspace_with_code(code text)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as '
+declare
+  target_workspace_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception ''You must be signed in to join a workspace.'';
+  end if;
+
+  select id
+  into target_workspace_id
+  from workspaces
+  where lower(join_code) = lower(trim(code))
+  limit 1;
+
+  if target_workspace_id is null then
+    raise exception ''Invalid workspace join code.'';
+  end if;
+
+  insert into workspace_members (workspace_id, user_id, role)
+  values (target_workspace_id, auth.uid(), ''viewer'')
+  on conflict (workspace_id, user_id) do nothing;
+
+  return target_workspace_id;
+end;
+';
 
