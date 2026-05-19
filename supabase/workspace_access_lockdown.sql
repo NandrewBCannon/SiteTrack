@@ -6,6 +6,17 @@
 -- Per the security review rule: no client-side trust and no broad authenticated
 -- table access. Workspace membership alone is not job-site membership.
 
+alter table workspaces enable row level security;
+alter table workspace_members enable row level security;
+alter table site_members enable row level security;
+alter table invites enable row level security;
+alter table sites enable row level security;
+alter table buildings enable row level security;
+alter table rooms enable row level security;
+alter table assets enable row level security;
+alter table asset_photos enable row level security;
+alter table asset_logs enable row level security;
+
 drop policy if exists "Authenticated users can manage sites" on sites;
 drop policy if exists "Authenticated users can manage buildings" on buildings;
 drop policy if exists "Authenticated users can manage rooms" on rooms;
