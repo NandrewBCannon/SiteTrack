@@ -142,7 +142,7 @@ export function SitesClient() {
 function SitePanel({ data, siteId, accent, canManage, canShare, onChange }: { data: StoreData; siteId: string; accent: number; canManage: boolean; canShare: boolean; onChange: (data: StoreData) => void }) {
   const site = data.sites.find((item) => item.id === siteId)!;
   const buildings = data.buildings.filter((building) => building.site_id === site.id);
-  const assetCount = data.assets.filter((asset) => asset.site_id === site.id).length;
+  const assetCount = data.assets.filter((asset) => asset.site_id === site.id && !asset.archived_at).length;
   const [isEditingSite, setIsEditingSite] = useState(false);
   const [isSiteMenuOpen, setIsSiteMenuOpen] = useState(false);
   const [siteDraft, setSiteDraft] = useState({
@@ -279,7 +279,7 @@ function SitePanel({ data, siteId, accent, canManage, canShare, onChange }: { da
 function BuildingPanel({ data, buildingId, canManage, canShare, onChange }: { data: StoreData; buildingId: string; canManage: boolean; canShare: boolean; onChange: (data: StoreData) => void }) {
   const building = data.buildings.find((item) => item.id === buildingId)!;
   const rooms = data.rooms.filter((room) => room.building_id === building.id);
-  const assetCount = data.assets.filter((asset) => asset.building_id === building.id).length;
+  const assetCount = data.assets.filter((asset) => asset.building_id === building.id && !asset.archived_at).length;
   const [isEditingBuilding, setIsEditingBuilding] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [buildingDraft, setBuildingDraft] = useState(building.name);
@@ -414,7 +414,7 @@ function EditableRoom({ data, room, canManage, onChange }: { data: StoreData; ro
   }
 
   function confirmDeleteRoom() {
-    const assetCount = data.assets.filter((asset) => asset.room_id === room.id).length;
+    const assetCount = data.assets.filter((asset) => asset.room_id === room.id && !asset.archived_at).length;
     const ok = window.confirm(`Delete room ${room.room_number}? This will also delete ${assetCount} assets in this room, their photos, and history logs.`);
     if (!ok) return;
     onChange(deleteRoom(data, room.id));

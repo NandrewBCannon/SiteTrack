@@ -1,5 +1,5 @@
 export type AssetStatus = "installed" | "removed" | "replaced" | "moved" | "damaged";
-export type ActionType = "Installed" | "Removed" | "Replaced" | "Moved" | "Faulty/Damaged";
+export type ActionType = "Installed" | "Removed" | "Replaced" | "Moved" | "Faulty/Damaged" | "Archived" | "Restored";
 
 export type Site = {
   id: string;
@@ -47,6 +47,9 @@ export type Asset = {
   notes: string;
   created_at: string;
   updated_at: string;
+  archived_at?: string;
+  archived_by?: string;
+  archived_reason?: string;
 };
 
 export type AssetPhoto = {

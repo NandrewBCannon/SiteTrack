@@ -36,6 +36,10 @@ export function getAssetViews(data: StoreData): AssetView[] {
   return data.assets.map((asset) => assetToView(asset, data));
 }
 
+export function getActiveAssetViews(data: StoreData): AssetView[] {
+  return getAssetViews(data).filter((asset) => !asset.archived_at);
+}
+
 export function assetToView(asset: Asset, data: StoreData): AssetView {
   return {
     ...asset,
@@ -55,7 +59,17 @@ export function locationLabel(asset: AssetView | Asset, data?: StoreData) {
 
 export function searchAssets(data: StoreData, query: string) {
   const term = query.trim().toLowerCase();
-  const views = getAssetViews(data);
+  const views = getActiveAssetViews(data);
+  return filterAssetViews(views, term);
+}
+
+export function searchArchivedAssets(data: StoreData, query: string) {
+  const term = query.trim().toLowerCase();
+  const views = getAssetViews(data).filter((asset) => asset.archived_at);
+  return filterAssetViews(views, term);
+}
+
+function filterAssetViews(views: AssetView[], term: string) {
   if (!term) return views;
   return views.filter((asset) =>
     [
@@ -177,6 +191,61 @@ export function deleteAsset(data: StoreData, assetId: string): StoreData {
     assets: data.assets.filter((asset) => asset.id !== assetId),
     asset_photos: data.asset_photos.filter((photo) => photo.asset_id !== assetId),
     asset_logs: data.asset_logs.filter((log) => log.asset_id !== assetId)
+  };
+}
+
+export function archiveAsset(data: StoreData, assetId: string, userName = "Site user"): StoreData {
+  const existing = data.assets.find((asset) => asset.id === assetId);
+  if (!existing) return data;
+  const timestamp = nowIso();
+  const nextAsset: Asset = {
+    ...existing,
+    archived_at: timestamp,
+    archived_reason: "Archived by admin.",
+    updated_at: timestamp
+  };
+  const log: AssetLog = {
+    id: uid("log"),
+    asset_id: assetId,
+    action_type: "Archived",
+    previous_location: locationLabel(existing, data),
+    new_location: "Archived",
+    notes: "Asset archived. It is hidden from active searches but can be restored by an admin.",
+    user_name: userName,
+    created_at: timestamp
+  };
+  return {
+    ...data,
+    assets: data.assets.map((asset) => (asset.id === assetId ? nextAsset : asset)),
+    asset_logs: [log, ...data.asset_logs]
+  };
+}
+
+export function restoreAsset(data: StoreData, assetId: string, userName = "Site user"): StoreData {
+  const existing = data.assets.find((asset) => asset.id === assetId);
+  if (!existing) return data;
+  const timestamp = nowIso();
+  const nextAsset: Asset = {
+    ...existing,
+    archived_at: undefined,
+    archived_by: undefined,
+    archived_reason: undefined,
+    updated_at: timestamp
+  };
+  const log: AssetLog = {
+    id: uid("log"),
+    asset_id: assetId,
+    action_type: "Restored",
+    previous_location: "Archived",
+    new_location: locationLabel(nextAsset, data),
+    notes: "Asset restored to the active register.",
+    user_name: userName,
+    created_at: timestamp
+  };
+  return {
+    ...data,
+    assets: data.assets.map((asset) => (asset.id === assetId ? nextAsset : asset)),
+    asset_logs: [log, ...data.asset_logs]
   };
 }
 

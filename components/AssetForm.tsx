@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Camera, ChevronDown, MapPin, Network, PackagePlus, ScanText, Save, Sparkles, Trash2, Upload } from "lucide-react";
+import { Archive, Camera, ChevronDown, MapPin, Network, PackagePlus, RotateCcw, ScanText, Save, Sparkles, Upload } from "lucide-react";
 import { Field, inputClass } from "@/components/Field";
 import { canDeleteAssets } from "@/lib/roles";
-import { assetToView, deleteAsset, saveAsset, saveStore } from "@/lib/store";
-import { deleteAssetFromSupabase, saveAssetToSupabase } from "@/lib/supabaseStore";
+import { archiveAsset, assetToView, restoreAsset, saveAsset, saveStore } from "@/lib/store";
+import { archiveAssetInSupabase, restoreAssetInSupabase, saveAssetToSupabase } from "@/lib/supabaseStore";
 import type { Asset, AssetStatus, StoreData } from "@/lib/types";
 import { useStoreData } from "@/lib/useStoreData";
 
@@ -105,7 +105,7 @@ export function AssetForm({ assetId }: { assetId?: string }) {
   const rooms = useMemo(() => data.rooms.filter((room) => room.building_id === draft.building_id), [data.rooms, draft.building_id]);
   const preview = draft.id ? assetToView({ ...draft, created_at: existing?.created_at ?? "", updated_at: existing?.updated_at ?? "" }, data) : undefined;
   const canEditCurrentAsset = !isSupabaseMode || canEditAllSites || (!!draft.site_id && editableSiteIds?.includes(draft.site_id));
-  const canDeleteCurrentAsset = Boolean(existing) && (!isSupabaseMode || canDeleteAssets(workspace?.role));
+  const canArchiveCurrentAsset = Boolean(existing) && (!isSupabaseMode || canDeleteAssets(workspace?.role));
 
   function update<K extends keyof AssetDraft>(key: K, value: AssetDraft[K]) {
     setDraft((current) => {
@@ -155,23 +155,43 @@ export function AssetForm({ assetId }: { assetId?: string }) {
     }
   }
 
-  async function onDeleteAsset() {
+  async function onArchiveAsset() {
     if (!existing) return;
     setError("");
-    if (!window.confirm(`Delete ${existing.asset_number} (${existing.item_name})? This removes its photos and history log too.`)) return;
+    if (!window.confirm(`Archive ${existing.asset_number} (${existing.item_name})? It will be hidden from active searches but can be restored by an admin.`)) return;
 
     try {
       if (isSupabaseMode) {
-        await deleteAssetFromSupabase(existing.id);
-        replaceData(deleteAsset(data, existing.id));
+        await archiveAssetInSupabase(existing.id);
+        replaceData(archiveAsset(data, existing.id, workspace?.name ?? "Site user"));
       } else {
-        const next = deleteAsset(data, existing.id);
+        const next = archiveAsset(data, existing.id);
         saveStore(next);
         setData(next);
       }
       router.push("/search");
     } catch (caught) {
-      setError(getErrorMessage(caught) || "Could not delete asset.");
+      setError(getErrorMessage(caught) || "Could not archive asset.");
+    }
+  }
+
+  async function onRestoreAsset() {
+    if (!existing) return;
+    setError("");
+    if (!window.confirm(`Restore ${existing.asset_number} (${existing.item_name}) to the active register?`)) return;
+
+    try {
+      if (isSupabaseMode) {
+        await restoreAssetInSupabase(existing.id);
+        replaceData(restoreAsset(data, existing.id, workspace?.name ?? "Site user"));
+      } else {
+        const next = restoreAsset(data, existing.id);
+        saveStore(next);
+        setData(next);
+      }
+      router.push(`/assets/${existing.id}`);
+    } catch (caught) {
+      setError(getErrorMessage(caught) || "Could not restore asset.");
     }
   }
 
@@ -377,17 +397,23 @@ export function AssetForm({ assetId }: { assetId?: string }) {
             <p className="mt-1 text-sm text-steel">{preview.location_in_room}</p>
           </div>
         ) : null}
-        {canDeleteCurrentAsset ? (
-          <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-5 shadow-panel">
-            <p className="text-sm font-semibold text-rose-900">Delete asset</p>
-            <p className="mt-2 text-sm leading-6 text-rose-800">Remove this asset, including attached photos and change history.</p>
+        {canArchiveCurrentAsset ? (
+          <div className={`rounded-[8px] border p-5 shadow-panel ${existing?.archived_at ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}>
+            <p className={`text-sm font-semibold ${existing?.archived_at ? "text-emerald-900" : "text-amber-900"}`}>
+              {existing?.archived_at ? "Restore asset" : "Archive asset"}
+            </p>
+            <p className={`mt-2 text-sm leading-6 ${existing?.archived_at ? "text-emerald-800" : "text-amber-800"}`}>
+              {existing?.archived_at
+                ? "Return this asset to active search results and dashboard lists."
+                : "Hide this asset from active searches while keeping photos and history for audit."}
+            </p>
             <button
               type="button"
-              onClick={() => void onDeleteAsset()}
-              className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] bg-rose-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5"
+              onClick={() => existing?.archived_at ? void onRestoreAsset() : void onArchiveAsset()}
+              className={`mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] px-4 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 ${existing?.archived_at ? "bg-emerald-600" : "bg-amber-600"}`}
             >
-              <Trash2 size={17} />
-              Delete Asset
+              {existing?.archived_at ? <RotateCcw size={17} /> : <Archive size={17} />}
+              {existing?.archived_at ? "Restore Asset" : "Archive Asset"}
             </button>
           </div>
         ) : null}

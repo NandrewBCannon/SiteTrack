@@ -1,16 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MoreHorizontal, Trash2 } from "lucide-react";
+import { Archive, MoreHorizontal, RotateCcw } from "lucide-react";
 import type { AssetView } from "@/lib/types";
 
 type AssetActionsMenuProps = {
   asset: AssetView;
-  canDelete: boolean;
-  onDelete: (asset: AssetView) => void;
+  canArchive: boolean;
+  onArchive: (asset: AssetView) => void;
+  onRestore?: (asset: AssetView) => void;
 };
 
-export function AssetActionsMenu({ asset, canDelete, onDelete }: AssetActionsMenuProps) {
+export function AssetActionsMenu({ asset, canArchive, onArchive, onRestore }: AssetActionsMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -23,7 +24,8 @@ export function AssetActionsMenu({ asset, canDelete, onDelete }: AssetActionsMen
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [isOpen]);
 
-  if (!canDelete) return null;
+  if (!canArchive) return null;
+  const isArchived = Boolean(asset.archived_at);
 
   return (
     <div ref={menuRef} className="relative shrink-0">
@@ -47,12 +49,13 @@ export function AssetActionsMenu({ asset, canDelete, onDelete }: AssetActionsMen
               event.preventDefault();
               event.stopPropagation();
               setIsOpen(false);
-              onDelete(asset);
+              if (isArchived && onRestore) onRestore(asset);
+              else onArchive(asset);
             }}
-            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-semibold text-rose-700 transition hover:bg-rose-50"
+            className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-semibold transition ${isArchived ? "text-emerald-700 hover:bg-emerald-50" : "text-amber-700 hover:bg-amber-50"}`}
           >
-            <Trash2 size={16} />
-            Delete asset
+            {isArchived ? <RotateCcw size={16} /> : <Archive size={16} />}
+            {isArchived ? "Restore asset" : "Archive asset"}
           </button>
         </div>
       ) : null}

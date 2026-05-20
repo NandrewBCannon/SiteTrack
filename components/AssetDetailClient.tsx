@@ -44,6 +44,11 @@ export function AssetDetailClient({ id }: { id: string }) {
           Edit Asset
         </Link>
       </div>
+      {asset.archived_at ? (
+        <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900 shadow-panel">
+          This asset is archived. It is hidden from active dashboard and search results until an admin restores it.
+        </div>
+      ) : null}
       <section className="overflow-hidden rounded-[8px] border border-zinc-200 bg-white shadow-panel">
         <div className="grid lg:grid-cols-[0.95fr_1.05fr]">
           <div className="min-h-[280px] bg-zinc-100">
@@ -61,7 +66,9 @@ export function AssetDetailClient({ id }: { id: string }) {
                 <h1 className="mt-2 text-3xl font-semibold tracking-tight">{view.item_name}</h1>
                 <p className="mt-2 text-steel">{view.item_type} | {view.brand} {view.model}</p>
               </div>
-              <span className={`rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ${statusClass(view.status)}`}>{statusLabel(view.status)}</span>
+              <span className={`rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ${view.archived_at ? "bg-zinc-100 text-zinc-600 ring-zinc-200" : statusClass(view.status)}`}>
+                {view.archived_at ? "Archived" : statusLabel(view.status)}
+              </span>
             </div>
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
               <Info label="Serial number" value={view.serial_number} />

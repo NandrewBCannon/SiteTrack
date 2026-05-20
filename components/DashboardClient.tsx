@@ -8,8 +8,8 @@ import { ButtonLink } from "@/components/ButtonLink";
 import { ExportRegisterButton } from "@/components/ExportRegisterButton";
 import { SearchBox } from "@/components/SearchBox";
 import { canDeleteAssets } from "@/lib/roles";
-import { deleteAsset, getAssetViews, loadStore, resetStore, searchAssets, statusClass, statusLabel } from "@/lib/store";
-import { deleteAssetFromSupabase } from "@/lib/supabaseStore";
+import { archiveAsset, getActiveAssetViews, getAssetViews, loadStore, resetStore, restoreAsset, searchAssets, statusClass, statusLabel } from "@/lib/store";
+import { archiveAssetInSupabase, restoreAssetInSupabase } from "@/lib/supabaseStore";
 import type { AssetStatus, AssetView } from "@/lib/types";
 import { useStoreData } from "@/lib/useStoreData";
 
@@ -20,9 +20,11 @@ export function DashboardClient() {
   const [query, setQuery] = useState("");
   const [assetFilter, setAssetFilter] = useState<AssetFilter>("installed");
   const [error, setError] = useState("");
-  const assets = getAssetViews(data);
+  const activeAssets = getActiveAssetViews(data);
+  const assets = activeAssets;
+  const allAssets = getAssetViews(data);
   const results = useMemo(() => {
-    const source = query.trim() ? searchAssets(data, query) : assets;
+    const source = query.trim() ? searchAssets(data, query) : activeAssets;
     const filtered = query.trim()
       ? source
       : source.filter((asset) => {
@@ -31,31 +33,46 @@ export function DashboardClient() {
           return true;
         });
     return filtered.slice(0, 12);
-  }, [assets, assetFilter, data, query]);
+  }, [activeAssets, assetFilter, data, query]);
   const recentLogs = [...data.asset_logs].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 3);
   const installed = assets.filter((asset) => asset.status === "installed").length;
   const issues = assets.filter((asset) => asset.status === "damaged").length;
   const listTitle = query ? "Matches" : assetFilter === "all" ? "All assets" : assetFilter === "issues" ? "Issues" : "Installed assets";
   const canAddAssets = !isSupabaseMode || workspace?.role === "admin" || (workspace?.editableSiteIds?.length ?? 0) > 0;
-  const canDelete = !isSupabaseMode || canDeleteAssets(workspace?.role);
+  const canArchive = !isSupabaseMode || canDeleteAssets(workspace?.role);
 
   function handleReset() {
     resetStore();
     setData(loadStore());
   }
 
-  async function handleDelete(asset: AssetView) {
-    if (!window.confirm(`Delete ${asset.asset_number} (${asset.item_name})? This removes its photos and history log too.`)) return;
+  async function handleArchive(asset: AssetView) {
+    if (!window.confirm(`Archive ${asset.asset_number} (${asset.item_name})? It will be hidden from active searches but can be restored by an admin.`)) return;
     setError("");
     try {
       if (isSupabaseMode) {
-        await deleteAssetFromSupabase(asset.id);
-        replaceData(deleteAsset(data, asset.id));
+        await archiveAssetInSupabase(asset.id);
+        replaceData(archiveAsset(data, asset.id, workspace?.name ?? "Site user"));
       } else {
-        setData(deleteAsset(data, asset.id));
+        setData(archiveAsset(data, asset.id));
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not delete this asset.");
+      setError(caught instanceof Error ? caught.message : "Could not archive this asset.");
+    }
+  }
+
+  async function handleRestore(asset: AssetView) {
+    if (!window.confirm(`Restore ${asset.asset_number} (${asset.item_name}) to the active register?`)) return;
+    setError("");
+    try {
+      if (isSupabaseMode) {
+        await restoreAssetInSupabase(asset.id);
+        replaceData(restoreAsset(data, asset.id, workspace?.name ?? "Site user"));
+      } else {
+        setData(restoreAsset(data, asset.id));
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not restore this asset.");
     }
   }
 
@@ -107,7 +124,7 @@ export function DashboardClient() {
           <div className="overflow-hidden rounded-[8px] border border-zinc-200 bg-white shadow-panel">
             {results.length ? (
               <div className="divide-y divide-zinc-100">
-                {results.map((asset) => <AssetListRow key={asset.id} asset={asset} canDelete={canDelete} onDelete={handleDelete} />)}
+                {results.map((asset) => <AssetListRow key={asset.id} asset={asset} canArchive={canArchive} onArchive={handleArchive} onRestore={handleRestore} />)}
               </div>
             ) : isLoading ? (
               <div className="p-6 text-sm text-steel">Loading secure asset data...</div>
@@ -127,7 +144,7 @@ export function DashboardClient() {
             </div>
             <div className="mt-3 grid gap-2">
             {recentLogs.map((log) => {
-              const asset = assets.find((item) => item.id === log.asset_id);
+              const asset = allAssets.find((item) => item.id === log.asset_id);
               return (
                 <div key={log.id} className="rounded-[8px] bg-zinc-50 p-3">
                   <div className="flex items-center gap-2 text-sm font-semibold text-ink">
@@ -167,15 +184,25 @@ function MiniMetric({ label, value, tone, active, onClick }: { label: string; va
   );
 }
 
-function AssetListRow({ asset, canDelete, onDelete }: { asset: AssetView; canDelete: boolean; onDelete: (asset: AssetView) => void }) {
+function AssetListRow({
+  asset,
+  canArchive,
+  onArchive,
+  onRestore
+}: {
+  asset: AssetView;
+  canArchive: boolean;
+  onArchive: (asset: AssetView) => void;
+  onRestore: (asset: AssetView) => void;
+}) {
   return (
     <div className="grid gap-3 p-4 transition hover:bg-zinc-50 sm:grid-cols-[1fr_160px_160px_44px] sm:items-center">
       <Link href={`/assets/${asset.id}`} className="min-w-0">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-semibold tracking-tight text-ink">{asset.asset_number}</p>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${statusClass(asset.status as AssetStatus)}`}>
-              {statusLabel(asset.status as AssetStatus)}
+            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${asset.archived_at ? "bg-zinc-100 text-zinc-600 ring-zinc-200" : statusClass(asset.status as AssetStatus)}`}>
+              {asset.archived_at ? "Archived" : statusLabel(asset.status as AssetStatus)}
             </span>
           </div>
           <p className="mt-1 truncate text-sm text-steel">{asset.item_name} {asset.serial_number ? `| SN ${asset.serial_number}` : ""}</p>
@@ -184,7 +211,7 @@ function AssetListRow({ asset, canDelete, onDelete }: { asset: AssetView; canDel
       <Link href={`/assets/${asset.id}`} className="text-sm font-medium text-steel">{asset.building?.name || "No building"} / {asset.room?.room_number || "No room"}</Link>
       <Link href={`/assets/${asset.id}`} className="truncate text-sm text-steel">{asset.network_patch_number || asset.switch_port || asset.location_in_room || "No patching"}</Link>
       <div className="justify-self-end">
-        <AssetActionsMenu asset={asset} canDelete={canDelete} onDelete={onDelete} />
+        <AssetActionsMenu asset={asset} canArchive={canArchive} onArchive={onArchive} onRestore={onRestore} />
       </div>
     </div>
   );

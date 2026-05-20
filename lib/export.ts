@@ -30,6 +30,7 @@ const headings = [
 
 export function buildAssetRegisterCsv(data: StoreData, options?: { siteId?: string; buildingId?: string }) {
   const assets = data.assets.filter((asset) => {
+    if (asset.archived_at) return false;
     if (options?.buildingId) return asset.building_id === options.buildingId;
     if (options?.siteId) return asset.site_id === options.siteId;
     return true;

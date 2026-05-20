@@ -118,7 +118,7 @@ export async function loadSupabaseStore(): Promise<SupabaseStoreResult> {
     isAdmin
       ? supabase.from("assets").select("*").eq("workspace_id", workspace.id).order("updated_at", { ascending: false })
       : assignedSiteIds.length
-        ? supabase.from("assets").select("*").in("site_id", assignedSiteIds).order("updated_at", { ascending: false })
+        ? supabase.from("assets").select("*").in("site_id", assignedSiteIds).is("archived_at", null).order("updated_at", { ascending: false })
       : Promise.resolve({ data: [], error: null })
   ]);
 
@@ -225,7 +225,10 @@ export async function saveAssetToSupabase(asset: Omit<Asset, "created_at" | "upd
     patching_details: asset.patching_details,
     status: asset.status,
     notes: asset.notes,
-    workspace_id: workspaceId
+    workspace_id: workspaceId,
+    archived_at: asset.archived_at || null,
+    archived_by: asset.archived_by || null,
+    archived_reason: asset.archived_reason || null
   });
   const { error: assetError } = await supabase.from("assets").upsert(assetRow).select("id").single();
   if (assetError) throw assetError;
@@ -263,6 +266,80 @@ export async function deleteAssetFromSupabase(assetId: string) {
   const result = await supabase.from("assets").delete({ count: "exact" }).eq("id", assetId);
   if (result.error) throw result.error;
   if (result.count !== 1) throw new Error("You do not have permission to delete this asset, or it no longer exists.");
+  clearSupabaseStoreCache();
+}
+
+export async function archiveAssetInSupabase(assetId: string) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  if (!assetId) throw new Error("No asset selected to archive.");
+
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  const user = userData.user;
+  const existing = await supabase.from("assets").select("id, location_in_room").eq("id", assetId).maybeSingle();
+  if (existing.error) throw existing.error;
+  if (!existing.data) throw new Error("Asset no longer exists.");
+
+  const archivedAt = new Date().toISOString();
+  const result = await supabase
+    .from("assets")
+    .update({
+      archived_at: archivedAt,
+      archived_by: user?.id ?? null,
+      archived_reason: "Archived by admin.",
+      updated_at: archivedAt
+    })
+    .eq("id", assetId)
+    .select("id")
+    .single();
+  if (result.error) throw result.error;
+
+  const { error: logError } = await supabase.from("asset_logs").insert({
+    asset_id: assetId,
+    action_type: "Archived",
+    previous_location: existing.data.location_in_room || "",
+    new_location: "Archived",
+    notes: "Asset archived. It is hidden from active searches but can be restored by an admin.",
+    user_name: user?.email ?? "Site user"
+  });
+  if (logError) throw logError;
+  clearSupabaseStoreCache();
+}
+
+export async function restoreAssetInSupabase(assetId: string) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  if (!assetId) throw new Error("No asset selected to restore.");
+
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  const user = userData.user;
+  const existing = await supabase.from("assets").select("id, location_in_room").eq("id", assetId).maybeSingle();
+  if (existing.error) throw existing.error;
+  if (!existing.data) throw new Error("Asset no longer exists.");
+
+  const restoredAt = new Date().toISOString();
+  const result = await supabase
+    .from("assets")
+    .update({
+      archived_at: null,
+      archived_by: null,
+      archived_reason: null,
+      updated_at: restoredAt
+    })
+    .eq("id", assetId)
+    .select("id")
+    .single();
+  if (result.error) throw result.error;
+
+  const { error: logError } = await supabase.from("asset_logs").insert({
+    asset_id: assetId,
+    action_type: "Restored",
+    previous_location: "Archived",
+    new_location: existing.data.location_in_room || "",
+    notes: "Asset restored to the active register.",
+    user_name: user?.email ?? "Site user"
+  });
+  if (logError) throw logError;
   clearSupabaseStoreCache();
 }
 
@@ -331,7 +408,10 @@ function mapAsset(row: any): Asset {
     status: row.status ?? "installed",
     notes: row.notes ?? "",
     created_at: row.created_at ?? "",
-    updated_at: row.updated_at ?? ""
+    updated_at: row.updated_at ?? "",
+    archived_at: row.archived_at ?? "",
+    archived_by: row.archived_by ?? "",
+    archived_reason: row.archived_reason ?? ""
   };
 }
 
@@ -413,6 +493,9 @@ function normalizeAssetRow<T extends Record<string, any>>(asset: T) {
     network_patch_number: blankToNull(asset.network_patch_number),
     location_in_room: blankToNull(asset.location_in_room),
     patching_details: blankToNull(asset.patching_details),
-    notes: blankToNull(asset.notes)
+    notes: blankToNull(asset.notes),
+    archived_at: blankToNull(asset.archived_at),
+    archived_by: blankToNull(asset.archived_by),
+    archived_reason: blankToNull(asset.archived_reason)
   };
 }

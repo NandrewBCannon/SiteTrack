@@ -81,7 +81,7 @@ export function SiteWorldMap({
         const point = points[site.id];
         if (!point) return;
         const buildings = data.buildings.filter((building) => building.site_id === site.id).length;
-        const assets = data.assets.filter((asset) => asset.site_id === site.id).length;
+        const assets = data.assets.filter((asset) => asset.site_id === site.id && !asset.archived_at).length;
         const active = site.id === selectedSiteId;
         const icon = L.divIcon({
           className: "",
