@@ -17,7 +17,7 @@ export function AssetForm({ assetId }: { assetId?: string }) {
   const router = useRouter();
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  const [data, setData, isSupabaseMode, workspace] = useStoreData();
+  const [data, setData, isSupabaseMode, workspace, isLoading] = useStoreData();
   const existing = assetId ? data.assets.find((asset) => asset.id === assetId) : undefined;
   const editableSiteIds = workspace?.editableSiteIds;
   const canEditAllSites = !isSupabaseMode || workspace?.role === "admin";
@@ -197,6 +197,11 @@ export function AssetForm({ assetId }: { assetId?: string }) {
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+      {isLoading ? (
+        <section className="rounded-[8px] border border-zinc-200 bg-white p-5 text-steel shadow-panel lg:col-span-2">
+          Loading secure site and room options...
+        </section>
+      ) : null}
       {isSupabaseMode && workspace && (!data.sites.length || !editableSites.length) ? (
         <section className="rounded-[8px] border border-amber-200 bg-amber-50 p-5 text-amber-900 shadow-panel lg:col-span-2">
           <h1 className="text-xl font-semibold tracking-tight">{data.sites.length ? "View-only access" : "No job-site access yet"}</h1>
@@ -215,7 +220,7 @@ export function AssetForm({ assetId }: { assetId?: string }) {
               <h1 className="mt-3 text-3xl font-semibold tracking-tight">{existing ? "Edit asset" : "Add asset"}</h1>
               <p className="mt-1 text-sm text-white/80">Core details first. Everything else can stay tucked away.</p>
           </div>
-            <button disabled={isSupabaseMode && !canEditCurrentAsset} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] bg-white px-4 text-sm font-semibold text-ink shadow-panel transition hover:-translate-y-0.5 disabled:opacity-50">
+            <button disabled={isLoading || (isSupabaseMode && !canEditCurrentAsset)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] bg-white px-4 text-sm font-semibold text-ink shadow-panel transition hover:-translate-y-0.5 disabled:opacity-50">
             <Save size={17} />
               Save
           </button>

@@ -7,7 +7,7 @@ import { searchAssets } from "@/lib/store";
 import { useStoreData } from "@/lib/useStoreData";
 
 export function SearchClient() {
-  const [data] = useStoreData();
+  const [data, , , , isLoading] = useStoreData();
   const [query, setQuery] = useState("");
   const results = useMemo(() => searchAssets(data, query), [data, query]);
 
@@ -19,8 +19,13 @@ export function SearchClient() {
       </div>
       <SearchBox value={query} onChange={setQuery} placeholder="Try HX-AUD-1201, SHM8A92103, L12-1242, SW12-18..." />
       <div className="grid gap-3">
-        {results.map((asset) => <AssetCard key={asset.id} asset={asset} />)}
-        {results.length === 0 ? (
+        {isLoading ? (
+          <div className="rounded-[8px] border border-zinc-200 bg-white p-8 text-center text-steel shadow-panel">
+            Loading secure asset data...
+          </div>
+        ) : null}
+        {!isLoading ? results.map((asset) => <AssetCard key={asset.id} asset={asset} />) : null}
+        {!isLoading && results.length === 0 ? (
           <div className="rounded-[8px] border border-dashed border-zinc-300 bg-white p-8 text-center text-steel">
             No matching assets found.
           </div>

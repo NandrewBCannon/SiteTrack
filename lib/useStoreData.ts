@@ -2,21 +2,31 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
-import { seedData } from "@/lib/seed";
 import { loadStore, saveStore } from "@/lib/store";
 import { loadSupabaseStore, saveSupabaseStore, type WorkspaceSummary } from "@/lib/supabaseStore";
 import type { StoreData } from "@/lib/types";
 
+const emptyStore: StoreData = {
+  sites: [],
+  buildings: [],
+  rooms: [],
+  assets: [],
+  asset_photos: [],
+  asset_logs: []
+};
+
 export function useStoreData() {
   const { isConfigured, user } = useAuth();
-  const [data, setData] = useState<StoreData>(seedData);
+  const [data, setData] = useState<StoreData>(emptyStore);
   const [isSupabaseMode, setIsSupabaseMode] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
+  const [isLoading, setIsLoading] = useState(Boolean(isConfigured && user));
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadData() {
+      setIsLoading(Boolean(isConfigured && user));
       if (isConfigured && user) {
         try {
           const result = await loadSupabaseStore();
@@ -24,9 +34,20 @@ export function useStoreData() {
           setIsSupabaseMode(true);
           setWorkspace(result.workspace);
           setData(result.data);
+          setIsLoading(false);
           return;
         } catch (error) {
-          console.error("Could not load Supabase data, falling back to local demo store.", error);
+          console.error("Could not load Supabase data.", error);
+          window.dispatchEvent(new CustomEvent("sitetrack-sync-error", {
+            detail: error instanceof Error ? error.message : getSupabaseErrorMessage(error)
+          }));
+          if (!cancelled) {
+            setIsSupabaseMode(true);
+            setWorkspace(null);
+            setData(emptyStore);
+            setIsLoading(false);
+          }
+          return;
         }
       }
 
@@ -34,6 +55,7 @@ export function useStoreData() {
         setIsSupabaseMode(false);
         setWorkspace(null);
         setData(loadStore());
+        setIsLoading(false);
       }
     }
 
@@ -62,7 +84,7 @@ export function useStoreData() {
     }
   }
 
-  return [data, commit, isSupabaseMode, workspace] as const;
+  return [data, commit, isSupabaseMode, workspace, isLoading] as const;
 }
 
 function getSupabaseErrorMessage(error: unknown) {

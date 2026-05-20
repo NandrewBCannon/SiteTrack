@@ -22,7 +22,7 @@ import type { Room, StoreData } from "@/lib/types";
 import { useStoreData } from "@/lib/useStoreData";
 
 export function SitesClient() {
-  const [data, setData, isSupabaseMode, workspace] = useStoreData();
+  const [data, setData, isSupabaseMode, workspace, isLoading] = useStoreData();
   const [selectedSiteId, setSelectedSiteId] = useState<string | undefined>(data.sites[0]?.id);
   const [siteName, setSiteName] = useState("");
   const [client, setClient] = useState("");
@@ -100,10 +100,20 @@ export function SitesClient() {
       </section>
 
       <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
-        <SiteWorldMap data={data} selectedSiteId={selectedSite?.id} onSelect={setSelectedSiteId} />
+        {isLoading ? (
+          <div className="grid min-h-[420px] place-items-center rounded-[8px] border border-zinc-200 bg-white text-sm font-semibold text-steel shadow-panel">
+            Loading secure site data...
+          </div>
+        ) : (
+          <SiteWorldMap data={data} selectedSiteId={selectedSite?.id} onSelect={setSelectedSiteId} />
+        )}
 
         <div className="min-w-0 lg:sticky lg:top-24 lg:self-start">
-          {selectedSite ? (
+          {isLoading ? (
+            <div className="rounded-[8px] border border-zinc-200 bg-white p-8 text-center text-steel shadow-panel">
+              Loading job-site details...
+            </div>
+          ) : selectedSite ? (
             <SitePanel
               key={selectedSite.id}
               data={data}

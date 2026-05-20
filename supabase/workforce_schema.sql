@@ -80,27 +80,35 @@ create unique index if not exists sites_workspace_name_unique
 on sites(workspace_id, lower(name))
 where workspace_id is not null;
 
-create unique index if not exists assets_workspace_asset_number_unique
-on assets(workspace_id, lower(asset_number))
-where workspace_id is not null;
+alter table assets drop constraint if exists assets_asset_number_key;
 
-create unique index if not exists assets_workspace_serial_number_unique
+drop index if exists assets_workspace_asset_number_unique;
+create unique index assets_workspace_asset_number_unique
+on assets(workspace_id, lower(asset_number))
+where workspace_id is not null and nullif(trim(asset_number), '') is not null;
+
+drop index if exists assets_workspace_serial_number_unique;
+create unique index assets_workspace_serial_number_unique
 on assets(workspace_id, lower(serial_number))
 where workspace_id is not null and nullif(trim(serial_number), '') is not null;
 
-create unique index if not exists assets_workspace_mac_address_unique
+drop index if exists assets_workspace_mac_address_unique;
+create unique index assets_workspace_mac_address_unique
 on assets(workspace_id, lower(replace(replace(mac_address, ':', ''), '-', '')))
 where workspace_id is not null and nullif(trim(mac_address), '') is not null;
 
-create unique index if not exists assets_workspace_ip_address_unique
+drop index if exists assets_workspace_ip_address_unique;
+create unique index assets_workspace_ip_address_unique
 on assets(workspace_id, lower(ip_address))
 where workspace_id is not null and nullif(trim(ip_address), '') is not null;
 
-create unique index if not exists assets_site_switch_port_unique
+drop index if exists assets_site_switch_port_unique;
+create unique index assets_site_switch_port_unique
 on assets(site_id, lower(replace(switch_port, ' ', '')))
 where site_id is not null and nullif(trim(switch_port), '') is not null;
 
-create unique index if not exists assets_site_network_patch_unique
+drop index if exists assets_site_network_patch_unique;
+create unique index assets_site_network_patch_unique
 on assets(site_id, lower(replace(network_patch_number, ' ', '')))
 where site_id is not null and nullif(trim(network_patch_number), '') is not null;
 

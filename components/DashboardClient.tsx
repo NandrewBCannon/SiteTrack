@@ -13,7 +13,7 @@ import { useStoreData } from "@/lib/useStoreData";
 type AssetFilter = "installed" | "all" | "issues";
 
 export function DashboardClient() {
-  const [data, setData, isSupabaseMode, workspace] = useStoreData();
+  const [data, setData, isSupabaseMode, workspace, isLoading] = useStoreData();
   const [query, setQuery] = useState("");
   const [assetFilter, setAssetFilter] = useState<AssetFilter>("installed");
   const assets = getAssetViews(data);
@@ -88,6 +88,8 @@ export function DashboardClient() {
               <div className="divide-y divide-zinc-100">
                 {results.map((asset) => <AssetListRow key={asset.id} asset={asset} />)}
               </div>
+            ) : isLoading ? (
+              <div className="p-6 text-sm text-steel">Loading secure asset data...</div>
             ) : (
               <div className="p-6 text-sm text-steel">No assets found for this view.</div>
             )}

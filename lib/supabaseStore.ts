@@ -5,6 +5,8 @@ import { canEditAssets, canManageJobSiteAccess } from "@/lib/roles";
 import type { Asset, AssetLog, AssetPhoto, AssetStatus, Building, Room, Site, StoreData } from "@/lib/types";
 
 const activeWorkspaceKey = "sitetrack-active-workspace-id";
+const storeCacheMs = 3500;
+let storeCache: { key: string; result: SupabaseStoreResult; loadedAt: number } | null = null;
 
 export type WorkspaceSummary = {
   id: string;
@@ -38,11 +40,17 @@ export function getActiveWorkspaceId() {
 export function setActiveWorkspaceId(workspaceId: string) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(activeWorkspaceKey, workspaceId);
+  clearSupabaseStoreCache();
 }
 
 export function clearActiveWorkspaceId() {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(activeWorkspaceKey);
+  clearSupabaseStoreCache();
+}
+
+export function clearSupabaseStoreCache() {
+  storeCache = null;
 }
 
 export async function loadSupabaseStore(): Promise<SupabaseStoreResult> {
@@ -52,6 +60,10 @@ export async function loadSupabaseStore(): Promise<SupabaseStoreResult> {
   if (userError) throw userError;
   const userId = userData.user?.id;
   if (!userId) return { data: emptyStore, workspace: null, workspaces: [] };
+  const cacheKey = `${userId}:${getActiveWorkspaceId()}`;
+  if (storeCache && storeCache.key === cacheKey && Date.now() - storeCache.loadedAt < storeCacheMs) {
+    return storeCache.result;
+  }
 
   const { data: memberships, error: memberError } = await supabase
     .from("workspace_members")
@@ -138,7 +150,7 @@ export async function loadSupabaseStore(): Promise<SupabaseStoreResult> {
   const relatedError = photosResult.error || logsResult.error;
   if (relatedError) throw relatedError;
 
-  return {
+  const result = {
     data: {
       sites,
       buildings,
@@ -150,6 +162,8 @@ export async function loadSupabaseStore(): Promise<SupabaseStoreResult> {
     workspace: activeWorkspace,
     workspaces
   };
+  storeCache = { key: cacheKey, result, loadedAt: Date.now() };
+  return result;
 }
 
 export async function saveSupabaseStore(data: StoreData, workspaceId = getActiveWorkspaceId()) {
@@ -173,6 +187,7 @@ export async function saveSupabaseStore(data: StoreData, workspaceId = getActive
   if (data.assets.length) await throwOnError(supabase.from("assets").upsert(data.assets.map((asset) => toAssetRow(asset, targetWorkspaceId))));
   if (data.asset_photos.length) await throwOnError(supabase.from("asset_photos").upsert(data.asset_photos.map(toPhotoRow)));
   if (data.asset_logs.length) await throwOnError(supabase.from("asset_logs").upsert(data.asset_logs.map(toLogRow)));
+  clearSupabaseStoreCache();
 }
 
 export async function saveAssetToSupabase(asset: Omit<Asset, "created_at" | "updated_at">, photoUrl?: string) {
@@ -191,7 +206,7 @@ export async function saveAssetToSupabase(asset: Omit<Asset, "created_at" | "upd
   if (!workspaceId) throw new Error("No active workspace found. Join or create a workspace before saving assets.");
 
   const assetId = asset.id || crypto.randomUUID();
-  const assetRow = {
+  const assetRow = normalizeAssetRow({
     id: assetId,
     asset_number: asset.asset_number,
     serial_number: asset.serial_number,
@@ -211,7 +226,7 @@ export async function saveAssetToSupabase(asset: Omit<Asset, "created_at" | "upd
     status: asset.status,
     notes: asset.notes,
     workspace_id: workspaceId
-  };
+  });
   const { error: assetError } = await supabase.from("assets").upsert(assetRow).select("id").single();
   if (assetError) throw assetError;
 
@@ -235,6 +250,7 @@ export async function saveAssetToSupabase(asset: Omit<Asset, "created_at" | "upd
     if (photoError) throw photoError;
   }
 
+  clearSupabaseStoreCache();
   return assetId;
 }
 
@@ -343,7 +359,7 @@ function toRoomRow(room: Room) {
 }
 
 function toAssetRow(asset: Asset, workspaceId: string) {
-  return { ...asset, workspace_id: workspaceId };
+  return normalizeAssetRow({ ...asset, workspace_id: workspaceId });
 }
 
 function toPhotoRow(photo: AssetPhoto) {
@@ -363,4 +379,28 @@ function statusToAction(status: AssetStatus): AssetLog["action_type"] {
     damaged: "Faulty/Damaged"
   };
   return actions[status];
+}
+
+function blankToNull(value: string | null | undefined) {
+  const trimmed = String(value ?? "").trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeAssetRow<T extends Record<string, any>>(asset: T) {
+  return {
+    ...asset,
+    asset_number: String(asset.asset_number ?? "").trim(),
+    serial_number: blankToNull(asset.serial_number),
+    item_name: String(asset.item_name ?? "").trim(),
+    item_type: blankToNull(asset.item_type),
+    brand: blankToNull(asset.brand),
+    model: blankToNull(asset.model),
+    mac_address: blankToNull(asset.mac_address),
+    ip_address: blankToNull(asset.ip_address),
+    switch_port: blankToNull(asset.switch_port),
+    network_patch_number: blankToNull(asset.network_patch_number),
+    location_in_room: blankToNull(asset.location_in_room),
+    patching_details: blankToNull(asset.patching_details),
+    notes: blankToNull(asset.notes)
+  };
 }

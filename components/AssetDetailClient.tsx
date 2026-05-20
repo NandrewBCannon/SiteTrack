@@ -7,8 +7,17 @@ import { assetToView, statusClass, statusLabel } from "@/lib/store";
 import { useStoreData } from "@/lib/useStoreData";
 
 export function AssetDetailClient({ id }: { id: string }) {
-  const [data] = useStoreData();
+  const [data, , , , isLoading] = useStoreData();
   const asset = data.assets.find((item) => item.id === id);
+
+  if (isLoading) {
+    return (
+      <div className="rounded-[8px] border border-zinc-200 bg-white p-8 text-center shadow-panel">
+        <PackageSearch className="mx-auto text-steel" size={36} />
+        <h1 className="mt-4 text-2xl font-semibold">Loading asset...</h1>
+      </div>
+    );
+  }
 
   if (!asset) {
     return (
