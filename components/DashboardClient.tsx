@@ -3,19 +3,23 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Activity, ArrowRight, Camera, MapPinned, Plus, RotateCcw, Search, Sparkles } from "lucide-react";
+import { AssetActionsMenu } from "@/components/AssetActionsMenu";
 import { ButtonLink } from "@/components/ButtonLink";
 import { ExportRegisterButton } from "@/components/ExportRegisterButton";
 import { SearchBox } from "@/components/SearchBox";
-import { getAssetViews, loadStore, resetStore, searchAssets, statusClass, statusLabel } from "@/lib/store";
+import { canDeleteAssets } from "@/lib/roles";
+import { deleteAsset, getAssetViews, loadStore, resetStore, searchAssets, statusClass, statusLabel } from "@/lib/store";
+import { deleteAssetFromSupabase } from "@/lib/supabaseStore";
 import type { AssetStatus, AssetView } from "@/lib/types";
 import { useStoreData } from "@/lib/useStoreData";
 
 type AssetFilter = "installed" | "all" | "issues";
 
 export function DashboardClient() {
-  const [data, setData, isSupabaseMode, workspace, isLoading] = useStoreData();
+  const [data, setData, isSupabaseMode, workspace, isLoading, replaceData] = useStoreData();
   const [query, setQuery] = useState("");
   const [assetFilter, setAssetFilter] = useState<AssetFilter>("installed");
+  const [error, setError] = useState("");
   const assets = getAssetViews(data);
   const results = useMemo(() => {
     const source = query.trim() ? searchAssets(data, query) : assets;
@@ -33,10 +37,26 @@ export function DashboardClient() {
   const issues = assets.filter((asset) => asset.status === "damaged").length;
   const listTitle = query ? "Matches" : assetFilter === "all" ? "All assets" : assetFilter === "issues" ? "Issues" : "Installed assets";
   const canAddAssets = !isSupabaseMode || workspace?.role === "admin" || (workspace?.editableSiteIds?.length ?? 0) > 0;
+  const canDelete = !isSupabaseMode || canDeleteAssets(workspace?.role);
 
   function handleReset() {
     resetStore();
     setData(loadStore());
+  }
+
+  async function handleDelete(asset: AssetView) {
+    if (!window.confirm(`Delete ${asset.asset_number} (${asset.item_name})? This removes its photos and history log too.`)) return;
+    setError("");
+    try {
+      if (isSupabaseMode) {
+        await deleteAssetFromSupabase(asset.id);
+        replaceData(deleteAsset(data, asset.id));
+      } else {
+        setData(deleteAsset(data, asset.id));
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not delete this asset.");
+    }
   }
 
   return (
@@ -83,10 +103,11 @@ export function DashboardClient() {
             <h2 className="text-xl font-semibold tracking-tight">{listTitle}</h2>
             {canAddAssets ? <ButtonLink href="/assets/new" icon={Plus} variant="secondary">Add</ButtonLink> : null}
           </div>
+          {error ? <p className="rounded-[8px] bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{error}</p> : null}
           <div className="overflow-hidden rounded-[8px] border border-zinc-200 bg-white shadow-panel">
             {results.length ? (
               <div className="divide-y divide-zinc-100">
-                {results.map((asset) => <AssetListRow key={asset.id} asset={asset} />)}
+                {results.map((asset) => <AssetListRow key={asset.id} asset={asset} canDelete={canDelete} onDelete={handleDelete} />)}
               </div>
             ) : isLoading ? (
               <div className="p-6 text-sm text-steel">Loading secure asset data...</div>
@@ -146,20 +167,25 @@ function MiniMetric({ label, value, tone, active, onClick }: { label: string; va
   );
 }
 
-function AssetListRow({ asset }: { asset: AssetView }) {
+function AssetListRow({ asset, canDelete, onDelete }: { asset: AssetView; canDelete: boolean; onDelete: (asset: AssetView) => void }) {
   return (
-    <Link href={`/assets/${asset.id}`} className="grid gap-3 p-4 transition hover:bg-zinc-50 sm:grid-cols-[1fr_160px_160px] sm:items-center">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="font-semibold tracking-tight text-ink">{asset.asset_number}</p>
-          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${statusClass(asset.status as AssetStatus)}`}>
-            {statusLabel(asset.status as AssetStatus)}
-          </span>
+    <div className="grid gap-3 p-4 transition hover:bg-zinc-50 sm:grid-cols-[1fr_160px_160px_44px] sm:items-center">
+      <Link href={`/assets/${asset.id}`} className="min-w-0">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-semibold tracking-tight text-ink">{asset.asset_number}</p>
+            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${statusClass(asset.status as AssetStatus)}`}>
+              {statusLabel(asset.status as AssetStatus)}
+            </span>
+          </div>
+          <p className="mt-1 truncate text-sm text-steel">{asset.item_name} {asset.serial_number ? `| SN ${asset.serial_number}` : ""}</p>
         </div>
-        <p className="mt-1 truncate text-sm text-steel">{asset.item_name} {asset.serial_number ? `| SN ${asset.serial_number}` : ""}</p>
+      </Link>
+      <Link href={`/assets/${asset.id}`} className="text-sm font-medium text-steel">{asset.building?.name || "No building"} / {asset.room?.room_number || "No room"}</Link>
+      <Link href={`/assets/${asset.id}`} className="truncate text-sm text-steel">{asset.network_patch_number || asset.switch_port || asset.location_in_room || "No patching"}</Link>
+      <div className="justify-self-end">
+        <AssetActionsMenu asset={asset} canDelete={canDelete} onDelete={onDelete} />
       </div>
-      <p className="text-sm font-medium text-steel">{asset.building?.name || "No building"} / {asset.room?.room_number || "No room"}</p>
-      <p className="truncate text-sm text-steel">{asset.network_patch_number || asset.switch_port || asset.location_in_room || "No patching"}</p>
-    </Link>
+    </div>
   );
 }

@@ -171,6 +171,15 @@ export function deleteRoom(data: StoreData, roomId: string): StoreData {
   };
 }
 
+export function deleteAsset(data: StoreData, assetId: string): StoreData {
+  return {
+    ...data,
+    assets: data.assets.filter((asset) => asset.id !== assetId),
+    asset_photos: data.asset_photos.filter((photo) => photo.asset_id !== assetId),
+    asset_logs: data.asset_logs.filter((log) => log.asset_id !== assetId)
+  };
+}
+
 export function saveAsset(data: StoreData, asset: Partial<Asset> & Omit<Asset, "id" | "created_at" | "updated_at">, photoUrl?: string) {
   const existing = asset.id ? data.assets.find((item) => item.id === asset.id) : undefined;
   const timestamp = nowIso();

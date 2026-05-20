@@ -13,3 +13,7 @@ export function canManageJobSiteAccess(role?: string) {
 export function canManageWorkspace(role?: string) {
   return role === "admin";
 }
+
+export function canDeleteAssets(role?: string) {
+  return role === "admin";
+}

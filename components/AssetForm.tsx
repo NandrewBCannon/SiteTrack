@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Camera, ChevronDown, MapPin, Network, PackagePlus, ScanText, Save, Sparkles, Upload } from "lucide-react";
+import { Camera, ChevronDown, MapPin, Network, PackagePlus, ScanText, Save, Sparkles, Trash2, Upload } from "lucide-react";
 import { Field, inputClass } from "@/components/Field";
-import { assetToView, saveAsset, saveStore } from "@/lib/store";
-import { saveAssetToSupabase } from "@/lib/supabaseStore";
+import { canDeleteAssets } from "@/lib/roles";
+import { assetToView, deleteAsset, saveAsset, saveStore } from "@/lib/store";
+import { deleteAssetFromSupabase, saveAssetToSupabase } from "@/lib/supabaseStore";
 import type { Asset, AssetStatus, StoreData } from "@/lib/types";
 import { useStoreData } from "@/lib/useStoreData";
 
@@ -17,7 +18,7 @@ export function AssetForm({ assetId }: { assetId?: string }) {
   const router = useRouter();
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  const [data, setData, isSupabaseMode, workspace, isLoading] = useStoreData();
+  const [data, setData, isSupabaseMode, workspace, isLoading, replaceData] = useStoreData();
   const existing = assetId ? data.assets.find((asset) => asset.id === assetId) : undefined;
   const editableSiteIds = workspace?.editableSiteIds;
   const canEditAllSites = !isSupabaseMode || workspace?.role === "admin";
@@ -104,6 +105,7 @@ export function AssetForm({ assetId }: { assetId?: string }) {
   const rooms = useMemo(() => data.rooms.filter((room) => room.building_id === draft.building_id), [data.rooms, draft.building_id]);
   const preview = draft.id ? assetToView({ ...draft, created_at: existing?.created_at ?? "", updated_at: existing?.updated_at ?? "" }, data) : undefined;
   const canEditCurrentAsset = !isSupabaseMode || canEditAllSites || (!!draft.site_id && editableSiteIds?.includes(draft.site_id));
+  const canDeleteCurrentAsset = Boolean(existing) && (!isSupabaseMode || canDeleteAssets(workspace?.role));
 
   function update<K extends keyof AssetDraft>(key: K, value: AssetDraft[K]) {
     setDraft((current) => {
@@ -150,6 +152,26 @@ export function AssetForm({ assetId }: { assetId?: string }) {
       router.push(`/assets/${savedId}`);
     } catch (caught) {
       setError(getErrorMessage(caught));
+    }
+  }
+
+  async function onDeleteAsset() {
+    if (!existing) return;
+    setError("");
+    if (!window.confirm(`Delete ${existing.asset_number} (${existing.item_name})? This removes its photos and history log too.`)) return;
+
+    try {
+      if (isSupabaseMode) {
+        await deleteAssetFromSupabase(existing.id);
+        replaceData(deleteAsset(data, existing.id));
+      } else {
+        const next = deleteAsset(data, existing.id);
+        saveStore(next);
+        setData(next);
+      }
+      router.push("/search");
+    } catch (caught) {
+      setError(getErrorMessage(caught) || "Could not delete asset.");
     }
   }
 
@@ -353,6 +375,20 @@ export function AssetForm({ assetId }: { assetId?: string }) {
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-steel">Current location</p>
             <p className="mt-2 text-lg font-semibold">{preview.building?.name} / {preview.room?.room_number}</p>
             <p className="mt-1 text-sm text-steel">{preview.location_in_room}</p>
+          </div>
+        ) : null}
+        {canDeleteCurrentAsset ? (
+          <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-5 shadow-panel">
+            <p className="text-sm font-semibold text-rose-900">Delete asset</p>
+            <p className="mt-2 text-sm leading-6 text-rose-800">Remove this asset, including attached photos and change history.</p>
+            <button
+              type="button"
+              onClick={() => void onDeleteAsset()}
+              className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] bg-rose-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5"
+            >
+              <Trash2 size={17} />
+              Delete Asset
+            </button>
           </div>
         ) : null}
       </aside>

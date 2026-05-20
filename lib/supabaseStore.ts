@@ -254,6 +254,18 @@ export async function saveAssetToSupabase(asset: Omit<Asset, "created_at" | "upd
   return assetId;
 }
 
+export async function deleteAssetFromSupabase(assetId: string) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  if (!assetId) throw new Error("No asset selected to delete.");
+
+  await throwOnError(supabase.from("asset_logs").delete().eq("asset_id", assetId));
+  await throwOnError(supabase.from("asset_photos").delete().eq("asset_id", assetId));
+  const result = await supabase.from("assets").delete({ count: "exact" }).eq("id", assetId);
+  if (result.error) throw result.error;
+  if (result.count !== 1) throw new Error("You do not have permission to delete this asset, or it no longer exists.");
+  clearSupabaseStoreCache();
+}
+
 async function deleteMissing(table: string, previousIds: string[], nextIds: string[]) {
   if (!supabase) return;
   const next = new Set(nextIds);

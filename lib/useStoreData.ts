@@ -84,7 +84,7 @@ export function useStoreData() {
     }
   }
 
-  return [data, commit, isSupabaseMode, workspace, isLoading] as const;
+  return [data, commit, isSupabaseMode, workspace, isLoading, setData] as const;
 }
 
 function getSupabaseErrorMessage(error: unknown) {
