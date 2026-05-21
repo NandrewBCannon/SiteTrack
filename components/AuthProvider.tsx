@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { displayName, initialsForProfile, loadCurrentUserProfile, profileFallback, type UserProfile } from "@/lib/profiles";
 
 type AuthContextValue = {
   isConfigured: boolean;
@@ -10,6 +11,10 @@ type AuthContextValue = {
   authError: string;
   session: Session | null;
   user: User | null;
+  profile: UserProfile | null;
+  displayName: string;
+  initials: string;
+  refreshProfile: () => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -17,6 +22,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(Boolean(supabase));
   const [authError, setAuthError] = useState("");
 
@@ -69,6 +75,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+    const user = session?.user;
+    if (!supabase || !user) {
+      setProfile(null);
+      return;
+    }
+
+    setProfile(profileFallback(user));
+    loadCurrentUserProfile(user)
+      .then((nextProfile) => {
+        if (mounted) setProfile(nextProfile);
+      })
+      .catch((error) => {
+        console.error("Could not load profile.", error);
+        if (mounted) setProfile(profileFallback(user));
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [session?.user]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       isConfigured: Boolean(supabase),
@@ -76,12 +105,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       authError,
       session,
       user: session?.user ?? null,
+      profile,
+      displayName: displayName(profile, session?.user?.email?.split("@")[0] ?? "Site user"),
+      initials: initialsForProfile(profile, session?.user?.email ?? "ST"),
+      async refreshProfile() {
+        if (!supabase || !session?.user) return;
+        setProfile(await loadCurrentUserProfile(session.user));
+      },
       async signOut() {
         if (supabase) await supabase.auth.signOut();
         setSession(null);
+        setProfile(null);
       }
     }),
-    [authError, isLoading, session]
+    [authError, isLoading, profile, session]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

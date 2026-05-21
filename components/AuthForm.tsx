@@ -11,6 +11,8 @@ import { supabase } from "@/lib/supabase";
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const router = useRouter();
   const { isConfigured } = useAuth();
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
@@ -29,7 +31,12 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           email,
           password,
           options: {
-            emailRedirectTo: `${window.location.origin}/auth/callback`
+            emailRedirectTo: `${window.location.origin}/auth/callback`,
+            data: {
+              first_name: firstName.trim(),
+              last_name: lastName.trim(),
+              display_name: [firstName.trim(), lastName.trim()].filter(Boolean).join(" ")
+            }
           }
         });
         if (signUpError) throw signUpError;
@@ -89,6 +96,16 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       <form onSubmit={submitPassword} className="grid gap-4">
         {error ? <p className="rounded-[8px] bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{error}</p> : null}
         {message ? <p className="rounded-[8px] bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">{message}</p> : null}
+        {mode === "signup" ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="First name">
+              <input className={inputClass} value={firstName} onChange={(event) => setFirstName(event.target.value)} required autoComplete="given-name" />
+            </Field>
+            <Field label="Last name">
+              <input className={inputClass} value={lastName} onChange={(event) => setLastName(event.target.value)} required autoComplete="family-name" />
+            </Field>
+          </div>
+        ) : null}
         <Field label="Email">
           <input className={inputClass} type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" />
         </Field>

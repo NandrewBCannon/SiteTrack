@@ -2,6 +2,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { canEditAssets, canManageJobSiteAccess } from "@/lib/roles";
+import { displayName, loadCurrentUserProfile } from "@/lib/profiles";
 import type { Asset, AssetLog, AssetPhoto, AssetStatus, Building, Room, Site, StoreData } from "@/lib/types";
 
 const activeWorkspaceKey = "sitetrack-active-workspace-id";
@@ -204,6 +205,7 @@ export async function saveAssetToSupabase(asset: Omit<Asset, "created_at" | "upd
   const workspaceResult = await loadSupabaseStore();
   const workspaceId = workspaceResult.workspace?.id;
   if (!workspaceId) throw new Error("No active workspace found. Join or create a workspace before saving assets.");
+  const userName = await getCurrentUserDisplayName();
 
   const assetId = asset.id || crypto.randomUUID();
   const assetRow = normalizeAssetRow({
@@ -240,7 +242,7 @@ export async function saveAssetToSupabase(asset: Omit<Asset, "created_at" | "upd
     previous_location: previousLocation,
     new_location: asset.location_in_room || "",
     notes: existing.data ? "Asset record updated." : "Asset created from add asset form.",
-    user_name: "Site user"
+    user_name: userName
   });
   if (logError) throw logError;
 
@@ -276,6 +278,7 @@ export async function archiveAssetInSupabase(assetId: string) {
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError) throw userError;
   const user = userData.user;
+  const userName = user ? displayName(await loadCurrentUserProfile(user), user.email ?? "Site user") : "Site user";
   const existing = await supabase.from("assets").select("id, location_in_room").eq("id", assetId).maybeSingle();
   if (existing.error) throw existing.error;
   if (!existing.data) throw new Error("Asset no longer exists.");
@@ -300,7 +303,7 @@ export async function archiveAssetInSupabase(assetId: string) {
     previous_location: existing.data.location_in_room || "",
     new_location: "Archived",
     notes: "Asset archived. It is hidden from active searches but can be restored by an admin.",
-    user_name: user?.email ?? "Site user"
+    user_name: userName
   });
   if (logError) throw logError;
   clearSupabaseStoreCache();
@@ -313,6 +316,7 @@ export async function restoreAssetInSupabase(assetId: string) {
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError) throw userError;
   const user = userData.user;
+  const userName = user ? displayName(await loadCurrentUserProfile(user), user.email ?? "Site user") : "Site user";
   const existing = await supabase.from("assets").select("id, location_in_room").eq("id", assetId).maybeSingle();
   if (existing.error) throw existing.error;
   if (!existing.data) throw new Error("Asset no longer exists.");
@@ -337,7 +341,7 @@ export async function restoreAssetInSupabase(assetId: string) {
     previous_location: "Archived",
     new_location: existing.data.location_in_room || "",
     notes: "Asset restored to the active register.",
-    user_name: user?.email ?? "Site user"
+    user_name: userName
   });
   if (logError) throw logError;
   clearSupabaseStoreCache();
@@ -498,4 +502,11 @@ function normalizeAssetRow<T extends Record<string, any>>(asset: T) {
     archived_by: blankToNull(asset.archived_by),
     archived_reason: blankToNull(asset.archived_reason)
   };
+}
+
+async function getCurrentUserDisplayName() {
+  if (!supabase) return "Site user";
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) return "Site user";
+  return displayName(await loadCurrentUserProfile(data.user), data.user.email ?? "Site user");
 }

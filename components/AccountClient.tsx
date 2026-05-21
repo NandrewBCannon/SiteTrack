@@ -23,6 +23,7 @@ import {
 import { useAuth } from "@/components/AuthProvider";
 import { inputClass } from "@/components/Field";
 import { canManageJobSiteAccess, canManageWorkspace, roles, type Role } from "@/lib/roles";
+import { displayName, loadProfilesForUsers, saveCurrentUserProfile, type ProfileMap, type UserProfile } from "@/lib/profiles";
 import { supabase } from "@/lib/supabase";
 import { loadSupabaseStore, setActiveWorkspaceId, type WorkspaceSummary } from "@/lib/supabaseStore";
 import type { Site, StoreData } from "@/lib/types";
@@ -62,6 +63,7 @@ type AccountData = {
   workspaceMembers: WorkspaceMember[];
   siteMembers: SiteMember[];
   invites: Invite[];
+  profiles: ProfileMap;
 };
 
 const emptyStore: StoreData = {
@@ -74,14 +76,15 @@ const emptyStore: StoreData = {
 };
 
 export function AccountClient() {
-  const { isConfigured, user, signOut } = useAuth();
+  const { displayName: currentDisplayName, initials, isConfigured, profile, refreshProfile, user, signOut } = useAuth();
   const [data, setData] = useState<AccountData>({
     store: emptyStore,
     workspaces: [],
     activeWorkspace: null,
     workspaceMembers: [],
     siteMembers: [],
-    invites: []
+    invites: [],
+    profiles: {}
   });
   const [selectedSiteId, setSelectedSiteId] = useState("");
   const [isLoading, setIsLoading] = useState(Boolean(isConfigured && user));
@@ -140,14 +143,22 @@ export function AccountClient() {
 
       const loadError = membersResult.error || siteMembersResult.error || invitesResult.error;
       if (loadError) throw loadError;
+      const workspaceMembers = (membersResult.data ?? []) as WorkspaceMember[];
+      const siteMembers = (siteMembersResult.data ?? []) as SiteMember[];
+      const profiles = await loadProfilesForUsers([
+        user.id,
+        ...workspaceMembers.map((member) => member.user_id),
+        ...siteMembers.map((member) => member.user_id)
+      ]);
 
       setData({
         store: result.data,
         workspaces: result.workspaces,
         activeWorkspace,
-        workspaceMembers: (membersResult.data ?? []) as WorkspaceMember[],
-        siteMembers: (siteMembersResult.data ?? []) as SiteMember[],
-        invites: (invitesResult.data ?? []) as Invite[]
+        workspaceMembers,
+        siteMembers,
+        invites: (invitesResult.data ?? []) as Invite[],
+        profiles
       });
       setSelectedSiteId((current) => current || result.data.sites[0]?.id || "");
     } catch (caught) {
@@ -169,11 +180,6 @@ export function AccountClient() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConfigured, user]);
-
-  const initials = useMemo(() => {
-    const email = user?.email ?? "Site user";
-    return email.slice(0, 2).toUpperCase();
-  }, [user]);
 
   const isAdmin = canManageWorkspace(data.activeWorkspace?.role);
   const manageableSiteIds = data.activeWorkspace?.role === "admin"
@@ -234,7 +240,7 @@ export function AccountClient() {
                 <ShieldCheck size={14} className="text-signal" />
                 Account
               </p>
-              <h1 className="mt-3 truncate text-3xl font-semibold tracking-tight">Your SiteTrack profile</h1>
+              <h1 className="mt-3 truncate text-3xl font-semibold tracking-tight">{currentDisplayName}</h1>
               <p className="mt-1 truncate text-sm text-steel">{user.email}</p>
             </div>
           </div>
@@ -270,6 +276,7 @@ export function AccountClient() {
               <Link href="/workspace/new" className="inline-flex min-h-11 items-center justify-center rounded-[8px] border border-zinc-200 bg-white px-4 text-sm font-semibold text-ink shadow-sm">Create Workspace</Link>
             </div>
           </section>
+          <ProfileCard user={user} profile={profile} onSaved={refreshProfile} onMessage={setMessage} onError={setError} />
           <SecurityCard email={user.email ?? ""} onResetPassword={() => void sendResetEmail()} />
         </div>
       ) : (
@@ -289,6 +296,7 @@ export function AccountClient() {
                 activeWorkspace={data.activeWorkspace}
                 currentUserId={user.id}
                 currentUserEmail={user.email ?? ""}
+                profiles={data.profiles}
                 isAdmin={isAdmin}
                 members={data.workspaceMembers}
                 invites={data.invites.filter((invite) => !invite.site_id)}
@@ -301,6 +309,7 @@ export function AccountClient() {
                 activeWorkspace={data.activeWorkspace}
                 currentUserId={user.id}
                 currentUserEmail={user.email ?? ""}
+                profiles={data.profiles}
                 members={data.workspaceMembers}
                 onChanged={refreshAccount}
                 onMessage={setMessage}
@@ -318,6 +327,7 @@ export function AccountClient() {
                 sites={isAdmin ? data.store.sites : data.store.sites.filter((site) => manageableSiteIds.includes(site.id))}
                 workspaceMembers={data.workspaceMembers}
                 siteMembers={data.siteMembers}
+                profiles={data.profiles}
                 invites={data.invites.filter((invite) => !!invite.site_id)}
                 workspaceId={data.activeWorkspace?.id ?? ""}
                 onChanged={refreshAccount}
@@ -329,12 +339,16 @@ export function AccountClient() {
                 currentUserId={user.id}
                 sites={data.store.sites}
                 siteMembers={data.siteMembers}
+                profiles={data.profiles}
                 onChanged={refreshAccount}
                 onMessage={setMessage}
                 onError={setError}
               />
             )}
           </aside>
+          <div className="lg:col-span-2">
+            <ProfileCard user={user} profile={profile} onSaved={refreshProfile} onMessage={setMessage} onError={setError} />
+          </div>
           <div className="lg:col-span-2">
             <SecurityCard email={user.email ?? ""} onResetPassword={() => void sendResetEmail()} />
           </div>
@@ -356,6 +370,62 @@ function AccountShell({ title, subtitle, children }: { title: string; subtitle: 
         <div className="mt-5">{children}</div>
       </section>
     </div>
+  );
+}
+
+function ProfileCard({
+  user,
+  profile,
+  onSaved,
+  onMessage,
+  onError
+}: {
+  user: NonNullable<ReturnType<typeof useAuth>["user"]>;
+  profile: UserProfile | null;
+  onSaved: () => Promise<void>;
+  onMessage: (message: string) => void;
+  onError: (message: string) => void;
+}) {
+  const [firstName, setFirstName] = useState(profile?.first_name ?? "");
+  const [lastName, setLastName] = useState(profile?.last_name ?? "");
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    setFirstName(profile?.first_name ?? "");
+    setLastName(profile?.last_name ?? "");
+  }, [profile?.first_name, profile?.last_name]);
+
+  async function saveProfile(event: React.FormEvent) {
+    event.preventDefault();
+    onError("");
+    onMessage("");
+    setIsSaving(true);
+    try {
+      await saveCurrentUserProfile(user, firstName, lastName);
+      await onSaved();
+      onMessage("Profile name saved.");
+    } catch (caught) {
+      onError(getErrorMessage(caught));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <section className="rounded-[8px] border border-zinc-200 bg-white p-5 shadow-panel">
+      <p className="inline-flex items-center gap-2 text-sm font-semibold text-ink"><UserRound size={17} className="text-signal" />Personal identity</p>
+      <p className="mt-2 text-xs leading-5 text-steel">This is how your name appears in workspaces, job-site access lists, and asset history logs.</p>
+      <form onSubmit={saveProfile} className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+        <input className={inputClass} value={firstName} onChange={(event) => setFirstName(event.target.value)} placeholder="First name" required autoComplete="given-name" />
+        <input className={inputClass} value={lastName} onChange={(event) => setLastName(event.target.value)} placeholder="Last name" required autoComplete="family-name" />
+        <button
+          className="inline-flex min-h-11 items-center justify-center rounded-[8px] bg-ink px-4 text-sm font-semibold text-white shadow-sm disabled:opacity-50"
+          disabled={isSaving}
+        >
+          {isSaving ? "Saving..." : "Save Name"}
+        </button>
+      </form>
+    </section>
   );
 }
 
@@ -474,6 +544,7 @@ function WorkspaceUsersCard({
   activeWorkspace,
   currentUserId,
   currentUserEmail,
+  profiles,
   isAdmin,
   members,
   invites,
@@ -484,6 +555,7 @@ function WorkspaceUsersCard({
   activeWorkspace: WorkspaceSummary | null;
   currentUserId: string;
   currentUserEmail: string;
+  profiles: ProfileMap;
   isAdmin: boolean;
   members: WorkspaceMember[];
   invites: Invite[];
@@ -551,8 +623,8 @@ function WorkspaceUsersCard({
         {members.map((member) => (
           <div key={member.id} className="grid gap-2 rounded-[8px] border border-zinc-200 bg-zinc-50 p-3 sm:grid-cols-[1fr_150px_40px] sm:items-center">
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-ink">{member.user_id === currentUserId ? currentUserEmail : `User ${member.user_id.slice(0, 8)}`}</p>
-              <p className="mt-1 text-xs text-steel">{member.user_id === currentUserId ? "You" : member.user_id}</p>
+              <p className="truncate text-sm font-semibold text-ink">{memberLabel(member.user_id, currentUserId, profiles, currentUserEmail)}</p>
+              <p className="mt-1 text-xs text-steel">{member.user_id === currentUserId ? "You" : `ID ${member.user_id.slice(0, 8)}`}</p>
             </div>
             <select className={inputClass} value={member.role} disabled={!isAdmin} onChange={(event) => void updateRole(member.id, event.target.value as Role)}>
               {roles.map((item) => <option key={item} value={item}>{item}</option>)}
@@ -592,6 +664,7 @@ function MemberWorkspaceCard({
   activeWorkspace,
   currentUserId,
   currentUserEmail,
+  profiles,
   members,
   onChanged,
   onMessage,
@@ -600,6 +673,7 @@ function MemberWorkspaceCard({
   activeWorkspace: WorkspaceSummary | null;
   currentUserId: string;
   currentUserEmail: string;
+  profiles: ProfileMap;
   members: WorkspaceMember[];
   onChanged: () => Promise<void>;
   onMessage: (message: string) => void;
@@ -628,7 +702,7 @@ function MemberWorkspaceCard({
     <section className="rounded-[8px] border border-zinc-200 bg-white p-5 shadow-panel">
       <p className="inline-flex items-center gap-2 text-sm font-semibold text-ink"><UsersRound size={17} className="text-signal" />Workspace membership</p>
       <div className="mt-4 rounded-[8px] bg-zinc-50 p-3">
-        <p className="text-sm font-semibold text-ink">{currentUserEmail}</p>
+        <p className="text-sm font-semibold text-ink">{memberLabel(currentUserId, currentUserId, profiles, currentUserEmail)}</p>
         <p className="mt-1 text-xs text-steel">Role: {membership?.role ?? activeWorkspace?.role ?? "member"}</p>
       </div>
       <p className="mt-3 text-xs leading-5 text-steel">Workspace editors are only available to admins. Your account can leave this workspace or manage password/security below.</p>
@@ -651,6 +725,7 @@ function JobSiteAccessCard({
   sites,
   workspaceMembers,
   siteMembers,
+  profiles,
   invites,
   workspaceId,
   onChanged,
@@ -664,6 +739,7 @@ function JobSiteAccessCard({
   sites: Site[];
   workspaceMembers: WorkspaceMember[];
   siteMembers: SiteMember[];
+  profiles: ProfileMap;
   invites: Invite[];
   workspaceId: string;
   onChanged: () => Promise<void>;
@@ -752,7 +828,7 @@ function JobSiteAccessCard({
           <div className="grid gap-2">
             {selectedSiteMembers.length ? selectedSiteMembers.map((member) => (
               <div key={member.id} className="grid gap-2 rounded-[8px] bg-zinc-50 p-3">
-                <p className="truncate text-sm font-semibold text-ink">{member.user_id === currentUserId ? "You" : `User ${member.user_id.slice(0, 8)}`}</p>
+                <p className="truncate text-sm font-semibold text-ink">{memberLabel(member.user_id, currentUserId, profiles)}</p>
                 <div className="grid grid-cols-[1fr_40px] gap-2">
                   <select className={inputClass} value={member.role} disabled={!canGrantAdmin && member.role === "admin"} onChange={(event) => void updateSiteRole(member.id, event.target.value as Role)}>
                     {(member.role === "admin" && !canGrantAdmin ? roles : grantableRoles).map((item) => <option key={item} value={item}>{item}</option>)}
@@ -779,7 +855,7 @@ function JobSiteAccessCard({
               <option value="">Choose user</option>
               {workspaceMembers.map((member) => (
                 <option key={member.id} value={member.user_id}>
-                  {member.user_id === currentUserId ? "You" : `User ${member.user_id.slice(0, 8)}`} | {member.role}
+                  {memberLabel(member.user_id, currentUserId, profiles)} | {member.role}
                 </option>
               ))}
             </select>
@@ -811,6 +887,7 @@ function MemberSitesCard({
   currentUserId,
   sites,
   siteMembers,
+  profiles,
   onChanged,
   onMessage,
   onError
@@ -818,6 +895,7 @@ function MemberSitesCard({
   currentUserId: string;
   sites: Site[];
   siteMembers: SiteMember[];
+  profiles: ProfileMap;
   onChanged: () => Promise<void>;
   onMessage: (message: string) => void;
   onError: (message: string) => void;
@@ -841,6 +919,7 @@ function MemberSitesCard({
   return (
     <section className="rounded-[8px] border border-zinc-200 bg-white p-5 shadow-panel">
       <p className="inline-flex items-center gap-2 text-sm font-semibold text-ink"><MapPinned size={17} className="text-coral" />Your job sites</p>
+      <p className="mt-1 text-sm font-semibold text-ink">{memberLabel(currentUserId, currentUserId, profiles)}</p>
       <p className="mt-2 text-xs leading-5 text-steel">These are the job sites you have specifically been granted. Site editing is admin-only.</p>
       <div className="mt-4 grid gap-2">
         {sites.length ? sites.map((site) => {
@@ -909,6 +988,12 @@ function PendingInvites({
 function buildJoinUrl(kind: "code" | "token", value: string) {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   return `${origin}/join?${kind}=${encodeURIComponent(value)}`;
+}
+
+function memberLabel(userId: string, currentUserId: string, profiles: ProfileMap, fallback?: string) {
+  const profile = profiles[userId];
+  const name = displayName(profile, fallback || `User ${userId.slice(0, 8)}`);
+  return userId === currentUserId ? `${name} (You)` : name;
 }
 
 async function copyText(

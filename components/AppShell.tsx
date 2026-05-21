@@ -16,7 +16,7 @@ const navItems = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { authError, isConfigured, isLoading, user, signOut } = useAuth();
+  const { authError, displayName, isConfigured, isLoading, user, signOut } = useAuth();
   const isAuthRoute = pathname.startsWith("/login") || pathname.startsWith("/signup") || pathname.startsWith("/auth/callback");
   const isSetupRoute = isAuthRoute || pathname.startsWith("/join") || pathname.startsWith("/workspace/new") || pathname.startsWith("/account");
   const [syncError, setSyncError] = useState("");
@@ -118,7 +118,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <>
                 <Link href="/account" className="inline-flex items-center gap-2 rounded-[8px] border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-ink shadow-sm">
                   <UserRound size={16} />
-                  <span className="hidden lg:inline">{user.email}</span>
+                  <span className="hidden max-w-44 truncate lg:inline">{displayName}</span>
                 </Link>
                 <button
                   type="button"
