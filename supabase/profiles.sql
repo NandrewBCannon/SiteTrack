@@ -3,9 +3,12 @@ create table if not exists public.profiles (
   first_name text not null default '',
   last_name text not null default '',
   display_name text not null default '',
+  avatar_path text,
   updated_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
+
+alter table public.profiles add column if not exists avatar_path text;
 
 alter table public.profiles enable row level security;
 
@@ -108,3 +111,53 @@ with check (id = auth.uid());
 
 revoke execute on function public.create_profile_for_new_user() from anon, authenticated, public;
 grant execute on function public.set_profile_display_name() to authenticated;
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'profile-avatars',
+  'profile-avatars',
+  false,
+  2097152,
+  array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do update
+set public = false,
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "Users can read related profile avatars" on storage.objects;
+drop policy if exists "Users can upload own profile avatar" on storage.objects;
+drop policy if exists "Users can update own profile avatar" on storage.objects;
+drop policy if exists "Users can delete own profile avatar" on storage.objects;
+
+create policy "Users can read related profile avatars"
+on storage.objects for select to authenticated
+using (
+  bucket_id = 'profile-avatars'
+  and safe_uuid(split_part(storage.objects.name, '/', 1)) = auth.uid()
+);
+
+create policy "Users can upload own profile avatar"
+on storage.objects for insert to authenticated
+with check (
+  bucket_id = 'profile-avatars'
+  and safe_uuid(split_part(storage.objects.name, '/', 1)) = auth.uid()
+);
+
+create policy "Users can update own profile avatar"
+on storage.objects for update to authenticated
+using (
+  bucket_id = 'profile-avatars'
+  and safe_uuid(split_part(storage.objects.name, '/', 1)) = auth.uid()
+)
+with check (
+  bucket_id = 'profile-avatars'
+  and safe_uuid(split_part(storage.objects.name, '/', 1)) = auth.uid()
+);
+
+create policy "Users can delete own profile avatar"
+on storage.objects for delete to authenticated
+using (
+  bucket_id = 'profile-avatars'
+  and safe_uuid(split_part(storage.objects.name, '/', 1)) = auth.uid()
+);

@@ -8,6 +8,8 @@ export type UserProfile = {
   first_name: string;
   last_name: string;
   display_name: string;
+  avatar_path?: string;
+  avatar_url?: string;
   updated_at?: string;
 };
 
@@ -23,7 +25,9 @@ export function profileFallback(user?: Pick<User, "id" | "email" | "user_metadat
     id: user.id,
     first_name: first,
     last_name: last,
-    display_name: display
+    display_name: display,
+    avatar_path: String(metadata.avatar_path ?? ""),
+    avatar_url: String(metadata.avatar_url ?? "")
   };
 }
 
@@ -43,7 +47,7 @@ export async function loadCurrentUserProfile(user: User) {
   if (!supabase) return profileFallback(user);
   const { data, error } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
   if (error) throw error;
-  if (data) return mapProfile(data);
+  if (data) return withAvatarUrl(mapProfile(data));
 
   const fallback = profileFallback(user);
   if (!fallback) return null;
@@ -58,7 +62,7 @@ export async function loadCurrentUserProfile(user: User) {
     .select("*")
     .single();
   if (insertError) throw insertError;
-  return mapProfile(inserted);
+  return withAvatarUrl(mapProfile(inserted));
 }
 
 export async function saveCurrentUserProfile(user: User, firstName: string, lastName: string) {
@@ -75,6 +79,7 @@ export async function saveCurrentUserProfile(user: User, firstName: string, last
       first_name,
       last_name,
       display_name,
+      avatar_path: user.user_metadata?.avatar_path ?? profileFallback(user)?.avatar_path ?? null,
       updated_at: new Date().toISOString()
     })
     .select("*")
@@ -90,7 +95,7 @@ export async function saveCurrentUserProfile(user: User, firstName: string, last
     }
   });
 
-  return mapProfile(data);
+  return withAvatarUrl(mapProfile(data));
 }
 
 export async function loadProfilesForUsers(userIds: string[]) {
@@ -100,7 +105,41 @@ export async function loadProfilesForUsers(userIds: string[]) {
 
   const { data, error } = await supabase.from("profiles").select("*").in("id", ids);
   if (error) throw error;
-  return Object.fromEntries((data ?? []).map((profile) => [profile.id, mapProfile(profile)]));
+  const profiles = await Promise.all((data ?? []).map((profile) => withAvatarUrl(mapProfile(profile))));
+  return Object.fromEntries(profiles.map((profile) => [profile.id, profile]));
+}
+
+export async function uploadCurrentUserAvatar(user: User, file: File) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  if (!file.type.startsWith("image/")) throw new Error("Choose an image file for your profile picture.");
+  if (file.size > 2 * 1024 * 1024) throw new Error("Profile picture must be under 2 MB.");
+
+  const extension = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+  const path = `${user.id}/avatar-${Date.now()}.${extension}`;
+  const { error: uploadError } = await supabase.storage.from("profile-avatars").upload(path, file, {
+    cacheControl: "3600",
+    contentType: file.type,
+    upsert: false
+  });
+  if (uploadError) throw uploadError;
+
+  const existing = await loadCurrentUserProfile(user);
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .upsert({
+      id: user.id,
+      first_name: existing?.first_name ?? String(user.user_metadata?.first_name ?? "").trim(),
+      last_name: existing?.last_name ?? String(user.user_metadata?.last_name ?? "").trim(),
+      avatar_path: path,
+      updated_at: new Date().toISOString()
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+
+  await supabase.auth.updateUser({ data: { avatar_path: path } });
+  return withAvatarUrl(mapProfile(data));
 }
 
 function mapProfile(row: any): UserProfile {
@@ -109,6 +148,14 @@ function mapProfile(row: any): UserProfile {
     first_name: row.first_name ?? "",
     last_name: row.last_name ?? "",
     display_name: row.display_name ?? "",
+    avatar_path: row.avatar_path ?? "",
+    avatar_url: row.avatar_url ?? "",
     updated_at: row.updated_at ?? ""
   };
+}
+
+async function withAvatarUrl(profile: UserProfile) {
+  if (!supabase || !profile.avatar_path || profile.avatar_url) return profile;
+  const { data } = await supabase.storage.from("profile-avatars").createSignedUrl(profile.avatar_path, 60 * 60);
+  return { ...profile, avatar_url: data?.signedUrl ?? "" };
 }

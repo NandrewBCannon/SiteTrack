@@ -16,14 +16,16 @@ import {
   RefreshCw,
   ShieldCheck,
   Trash2,
+  Upload,
   UserPlus,
   UserRound,
   UsersRound
 } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
+import { UserAvatar } from "@/components/UserAvatar";
 import { inputClass } from "@/components/Field";
 import { canManageJobSiteAccess, canManageWorkspace, roles, type Role } from "@/lib/roles";
-import { displayName, loadProfilesForUsers, saveCurrentUserProfile, type ProfileMap, type UserProfile } from "@/lib/profiles";
+import { displayName, loadProfilesForUsers, saveCurrentUserProfile, uploadCurrentUserAvatar, type ProfileMap, type UserProfile } from "@/lib/profiles";
 import { supabase } from "@/lib/supabase";
 import { loadSupabaseStore, setActiveWorkspaceId, type WorkspaceSummary } from "@/lib/supabaseStore";
 import type { Site, StoreData } from "@/lib/types";
@@ -232,9 +234,7 @@ export function AccountClient() {
       <section className="glass overflow-hidden rounded-[8px] p-5 shadow-panel sm:p-7 animate-rise">
         <div className="flex flex-wrap items-center justify-between gap-5">
           <div className="flex min-w-0 items-center gap-4">
-            <div className="grid h-16 w-16 shrink-0 place-items-center rounded-[8px] bg-gradient-to-br from-ink via-signal to-mint text-xl font-semibold text-white shadow-panel">
-              {initials}
-            </div>
+            <UserAvatar profile={profile} fallback={initials} size="lg" />
             <div className="min-w-0">
               <p className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-steel shadow-sm">
                 <ShieldCheck size={14} className="text-signal" />
@@ -388,6 +388,7 @@ function ProfileCard({
 }) {
   const [firstName, setFirstName] = useState(profile?.first_name ?? "");
   const [lastName, setLastName] = useState(profile?.last_name ?? "");
+  const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -411,10 +412,36 @@ function ProfileCard({
     }
   }
 
+  async function uploadAvatar(file?: File) {
+    if (!file) return;
+    onError("");
+    onMessage("");
+    setIsUploading(true);
+    try {
+      await uploadCurrentUserAvatar(user, file);
+      await onSaved();
+      onMessage("Profile picture uploaded.");
+    } catch (caught) {
+      onError(getErrorMessage(caught));
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
   return (
     <section className="rounded-[8px] border border-zinc-200 bg-white p-5 shadow-panel">
-      <p className="inline-flex items-center gap-2 text-sm font-semibold text-ink"><UserRound size={17} className="text-signal" />Personal identity</p>
-      <p className="mt-2 text-xs leading-5 text-steel">This is how your name appears in workspaces, job-site access lists, and asset history logs.</p>
+      <div className="flex flex-wrap items-center gap-4">
+        <UserAvatar profile={profile} fallback={user.email ?? "ST"} size="lg" />
+        <div className="min-w-0 flex-1">
+          <p className="inline-flex items-center gap-2 text-sm font-semibold text-ink"><UserRound size={17} className="text-signal" />Personal identity</p>
+          <p className="mt-2 text-xs leading-5 text-steel">This is how your name and profile picture appear in workspaces, job-site access lists, and asset history logs.</p>
+        </div>
+        <label className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-[8px] border border-zinc-200 bg-white px-4 text-sm font-semibold text-ink shadow-sm transition hover:-translate-y-0.5">
+          <Upload size={17} />
+          {isUploading ? "Uploading..." : "Upload Photo"}
+          <input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void uploadAvatar(event.target.files?.[0])} />
+        </label>
+      </div>
       <form onSubmit={saveProfile} className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
         <input className={inputClass} value={firstName} onChange={(event) => setFirstName(event.target.value)} placeholder="First name" required autoComplete="given-name" />
         <input className={inputClass} value={lastName} onChange={(event) => setLastName(event.target.value)} placeholder="Last name" required autoComplete="family-name" />
@@ -622,9 +649,12 @@ function WorkspaceUsersCard({
       <div className="mt-4 grid gap-2">
         {members.map((member) => (
           <div key={member.id} className="grid gap-2 rounded-[8px] border border-zinc-200 bg-zinc-50 p-3 sm:grid-cols-[1fr_150px_40px] sm:items-center">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-ink">{memberLabel(member.user_id, currentUserId, profiles, currentUserEmail)}</p>
-              <p className="mt-1 text-xs text-steel">{member.user_id === currentUserId ? "You" : `ID ${member.user_id.slice(0, 8)}`}</p>
+            <div className="flex min-w-0 items-center gap-3">
+              <UserAvatar profile={profiles[member.user_id]} fallback={member.user_id} size="sm" />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-ink">{memberLabel(member.user_id, currentUserId, profiles, currentUserEmail)}</p>
+                <p className="mt-1 text-xs text-steel">{member.user_id === currentUserId ? "You" : `ID ${member.user_id.slice(0, 8)}`}</p>
+              </div>
             </div>
             <select className={inputClass} value={member.role} disabled={!isAdmin} onChange={(event) => void updateRole(member.id, event.target.value as Role)}>
               {roles.map((item) => <option key={item} value={item}>{item}</option>)}
@@ -701,9 +731,12 @@ function MemberWorkspaceCard({
   return (
     <section className="rounded-[8px] border border-zinc-200 bg-white p-5 shadow-panel">
       <p className="inline-flex items-center gap-2 text-sm font-semibold text-ink"><UsersRound size={17} className="text-signal" />Workspace membership</p>
-      <div className="mt-4 rounded-[8px] bg-zinc-50 p-3">
-        <p className="text-sm font-semibold text-ink">{memberLabel(currentUserId, currentUserId, profiles, currentUserEmail)}</p>
-        <p className="mt-1 text-xs text-steel">Role: {membership?.role ?? activeWorkspace?.role ?? "member"}</p>
+      <div className="mt-4 flex items-center gap-3 rounded-[8px] bg-zinc-50 p-3">
+        <UserAvatar profile={profiles[currentUserId]} fallback={currentUserEmail} size="sm" />
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-ink">{memberLabel(currentUserId, currentUserId, profiles, currentUserEmail)}</p>
+          <p className="mt-1 text-xs text-steel">Role: {membership?.role ?? activeWorkspace?.role ?? "member"}</p>
+        </div>
       </div>
       <p className="mt-3 text-xs leading-5 text-steel">Workspace editors are only available to admins. Your account can leave this workspace or manage password/security below.</p>
       <button
@@ -828,7 +861,10 @@ function JobSiteAccessCard({
           <div className="grid gap-2">
             {selectedSiteMembers.length ? selectedSiteMembers.map((member) => (
               <div key={member.id} className="grid gap-2 rounded-[8px] bg-zinc-50 p-3">
-                <p className="truncate text-sm font-semibold text-ink">{memberLabel(member.user_id, currentUserId, profiles)}</p>
+                <div className="flex min-w-0 items-center gap-3">
+                  <UserAvatar profile={profiles[member.user_id]} fallback={member.user_id} size="sm" />
+                  <p className="truncate text-sm font-semibold text-ink">{memberLabel(member.user_id, currentUserId, profiles)}</p>
+                </div>
                 <div className="grid grid-cols-[1fr_40px] gap-2">
                   <select className={inputClass} value={member.role} disabled={!canGrantAdmin && member.role === "admin"} onChange={(event) => void updateSiteRole(member.id, event.target.value as Role)}>
                     {(member.role === "admin" && !canGrantAdmin ? roles : grantableRoles).map((item) => <option key={item} value={item}>{item}</option>)}
@@ -919,7 +955,10 @@ function MemberSitesCard({
   return (
     <section className="rounded-[8px] border border-zinc-200 bg-white p-5 shadow-panel">
       <p className="inline-flex items-center gap-2 text-sm font-semibold text-ink"><MapPinned size={17} className="text-coral" />Your job sites</p>
-      <p className="mt-1 text-sm font-semibold text-ink">{memberLabel(currentUserId, currentUserId, profiles)}</p>
+      <div className="mt-3 flex items-center gap-3">
+        <UserAvatar profile={profiles[currentUserId]} fallback={currentUserId} size="sm" />
+        <p className="text-sm font-semibold text-ink">{memberLabel(currentUserId, currentUserId, profiles)}</p>
+      </div>
       <p className="mt-2 text-xs leading-5 text-steel">These are the job sites you have specifically been granted. Site editing is admin-only.</p>
       <div className="mt-4 grid gap-2">
         {sites.length ? sites.map((site) => {
