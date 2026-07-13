@@ -24,6 +24,11 @@ export type SupabaseStoreResult = {
   workspaces: WorkspaceSummary[];
 };
 
+export type WorkspaceGate = {
+  hasWorkspace: boolean;
+  canAddAssets: boolean;
+};
+
 const emptyStore: StoreData = {
   sites: [],
   buildings: [],
@@ -167,6 +172,37 @@ export async function loadSupabaseStore(): Promise<SupabaseStoreResult> {
   return result;
 }
 
+export async function loadWorkspaceGate(): Promise<WorkspaceGate> {
+  if (!supabase) return { hasWorkspace: false, canAddAssets: true };
+
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  const userId = userData.user?.id;
+  if (!userId) return { hasWorkspace: false, canAddAssets: false };
+
+  const { data: memberships, error: memberError } = await supabase
+    .from("workspace_members")
+    .select("role")
+    .eq("user_id", userId)
+    .limit(1);
+  if (memberError) throw memberError;
+
+  const role = memberships?.[0]?.role;
+  if (!role) return { hasWorkspace: false, canAddAssets: false };
+  if (role === "admin") return { hasWorkspace: true, canAddAssets: true };
+
+  const { data: siteMemberships, error: siteError } = await supabase
+    .from("site_members")
+    .select("role")
+    .eq("user_id", userId);
+  if (siteError) throw siteError;
+
+  return {
+    hasWorkspace: true,
+    canAddAssets: (siteMemberships ?? []).some((membership: any) => canEditAssets(membership.role))
+  };
+}
+
 export async function saveSupabaseStore(data: StoreData, workspaceId = getActiveWorkspaceId()) {
   const existing = await loadSupabaseStore();
   const targetWorkspaceId = workspaceId || existing.workspace?.id;
@@ -202,10 +238,9 @@ export async function saveAssetToSupabase(asset: Omit<Asset, "created_at" | "upd
     : { data: null, error: null };
   if (existing.error) throw existing.error;
 
-  const workspaceResult = await loadSupabaseStore();
-  const workspaceId = workspaceResult.workspace?.id;
+  const workspaceId = await getWritableWorkspaceId();
   if (!workspaceId) throw new Error("No active workspace found. Join or create a workspace before saving assets.");
-  const userName = await getCurrentUserDisplayName();
+  const userName = await getCurrentUserDisplayName().catch(() => "Site user");
 
   const assetId = asset.id || crypto.randomUUID();
   const assetRow = normalizeAssetRow({
@@ -508,5 +543,44 @@ async function getCurrentUserDisplayName() {
   if (!supabase) return "Site user";
   const { data, error } = await supabase.auth.getUser();
   if (error || !data.user) return "Site user";
-  return displayName(await loadCurrentUserProfile(data.user), data.user.email ?? "Site user");
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("first_name, last_name, display_name")
+    .eq("id", data.user.id)
+    .maybeSingle();
+  return displayName(profile as any, data.user.email ?? "Site user");
+}
+
+async function getWritableWorkspaceId() {
+  if (!supabase) return "";
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  const userId = userData.user?.id;
+  if (!userId) return "";
+
+  const activeId = getActiveWorkspaceId();
+  if (activeId) {
+    const { data: activeMembership, error: activeMembershipError } = await supabase
+      .from("workspace_members")
+      .select("workspace_id")
+      .eq("user_id", userId)
+      .eq("workspace_id", activeId)
+      .maybeSingle();
+    if (activeMembershipError) throw activeMembershipError;
+    if (activeMembership?.workspace_id) return activeMembership.workspace_id;
+    clearActiveWorkspaceId();
+  }
+
+  const { data: membership, error: membershipError } = await supabase
+    .from("workspace_members")
+    .select("workspace_id")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (membershipError) throw membershipError;
+
+  const workspaceId = membership?.workspace_id ?? "";
+  if (workspaceId) setActiveWorkspaceId(workspaceId);
+  return workspaceId;
 }

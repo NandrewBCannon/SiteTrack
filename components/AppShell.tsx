@@ -6,7 +6,7 @@ import { Boxes, Building2, Home, KeyRound, Loader2, LockKeyhole, LogOut, Map, Pl
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { UserAvatar } from "@/components/UserAvatar";
-import { loadSupabaseStore } from "@/lib/supabaseStore";
+import { loadWorkspaceGate } from "@/lib/supabaseStore";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: Home },
@@ -53,16 +53,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      setHasWorkspace(null);
       try {
-        const result = await loadSupabaseStore();
+        const result = await loadWorkspaceGate();
         if (!cancelled) {
-          setHasWorkspace(Boolean(result.workspace));
-          setCanAddAssets(Boolean(result.workspace && (result.workspace.role === "admin" || (result.workspace.editableSiteIds?.length ?? 0) > 0)));
+          setHasWorkspace(result.hasWorkspace);
+          setCanAddAssets(result.canAddAssets);
         }
       } catch {
         if (!cancelled) {
-          setHasWorkspace(false);
+          setHasWorkspace(true);
           setCanAddAssets(false);
         }
       }
@@ -175,13 +174,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 Go to Login
               </Link>
             </section>
-          </div>
-        ) : isConfigured && user && !isSetupRoute && hasWorkspace === null ? (
-          <div className="grid min-h-[60vh] place-items-center">
-            <div className="rounded-[8px] border border-zinc-200 bg-white p-6 text-center shadow-panel">
-              <Loader2 className="mx-auto animate-spin text-signal" size={28} />
-              <p className="mt-3 text-sm font-semibold text-steel">Checking workspace access...</p>
-            </div>
           </div>
         ) : isConfigured && user && !isSetupRoute && hasWorkspace === false ? (
           <div className="mx-auto grid min-h-[60vh] max-w-lg place-items-center">
