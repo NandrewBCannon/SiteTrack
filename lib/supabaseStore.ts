@@ -227,6 +227,52 @@ export async function saveSupabaseStore(data: StoreData, workspaceId = getActive
   clearSupabaseStoreCache();
 }
 
+export async function upsertSiteInSupabase(site: Site, workspaceId = getActiveWorkspaceId()) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  if (!workspaceId) throw new Error("No active workspace found. Create or select a workspace before saving sites.");
+  await throwOnError(supabase.from("sites").upsert(toSiteRow(site, workspaceId)));
+  clearSupabaseStoreCache();
+}
+
+export async function deleteSiteFromSupabase(siteId: string) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  if (!siteId) throw new Error("No site selected to delete.");
+  const result = await supabase.from("sites").delete({ count: "exact" }).eq("id", siteId);
+  if (result.error) throw result.error;
+  if (result.count !== 1) throw new Error("You do not have permission to delete this site, or it no longer exists.");
+  clearSupabaseStoreCache();
+}
+
+export async function upsertBuildingInSupabase(building: Building) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  await throwOnError(supabase.from("buildings").upsert(toBuildingRow(building)));
+  clearSupabaseStoreCache();
+}
+
+export async function deleteBuildingFromSupabase(buildingId: string) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  if (!buildingId) throw new Error("No building selected to delete.");
+  const result = await supabase.from("buildings").delete({ count: "exact" }).eq("id", buildingId);
+  if (result.error) throw result.error;
+  if (result.count !== 1) throw new Error("You do not have permission to delete this building, or it no longer exists.");
+  clearSupabaseStoreCache();
+}
+
+export async function upsertRoomInSupabase(room: Room) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  await throwOnError(supabase.from("rooms").upsert(toRoomRow(room)));
+  clearSupabaseStoreCache();
+}
+
+export async function deleteRoomFromSupabase(roomId: string) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  if (!roomId) throw new Error("No room selected to delete.");
+  const result = await supabase.from("rooms").delete({ count: "exact" }).eq("id", roomId);
+  if (result.error) throw result.error;
+  if (result.count !== 1) throw new Error("You do not have permission to delete this room, or it no longer exists.");
+  clearSupabaseStoreCache();
+}
+
 export async function saveAssetToSupabase(asset: Omit<Asset, "created_at" | "updated_at">, photoUrl?: string) {
   if (!supabase) throw new Error("Supabase is not configured.");
   if (!asset.asset_number || !asset.item_name || !asset.site_id || !asset.building_id || !asset.room_id) {

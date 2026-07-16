@@ -18,11 +18,22 @@ import {
   updateRoom,
   updateSite
 } from "@/lib/store";
+import {
+  deleteBuildingFromSupabase,
+  deleteRoomFromSupabase,
+  deleteSiteFromSupabase,
+  upsertBuildingInSupabase,
+  upsertRoomInSupabase,
+  upsertSiteInSupabase
+} from "@/lib/supabaseStore";
 import type { Room, StoreData } from "@/lib/types";
 import { useStoreData } from "@/lib/useStoreData";
 
+type PersistOperation = () => Promise<void>;
+type PersistChange = (next: StoreData, operation?: PersistOperation) => Promise<void>;
+
 export function SitesClient() {
-  const [data, setData, isSupabaseMode, workspace, isLoading] = useStoreData();
+  const [data, commitData, isSupabaseMode, workspace, isLoading, replaceData] = useStoreData();
   const [selectedSiteId, setSelectedSiteId] = useState<string | undefined>(data.sites[0]?.id);
   const [siteName, setSiteName] = useState("");
   const [client, setClient] = useState("");
@@ -34,12 +45,26 @@ export function SitesClient() {
   const canShareAllSites = !isSupabaseMode || workspace?.role === "admin";
   const shareableSiteIds = workspace?.manageableSiteIds ?? [];
 
-  function commit(next: StoreData) {
+  async function persist(next: StoreData, operation?: PersistOperation) {
+    if (isSupabaseMode) {
+      if (!operation) throw new Error("No Supabase save action was provided.");
+      window.dispatchEvent(new CustomEvent("sitetrack-sync-status", { detail: "Saving to Supabase..." }));
+      try {
+        await operation();
+        replaceData(next);
+        window.dispatchEvent(new CustomEvent("sitetrack-sync-status", { detail: "Saved to Supabase." }));
+      } catch (error) {
+        window.dispatchEvent(new CustomEvent("sitetrack-sync-error", { detail: getErrorMessage(error) }));
+        throw error;
+      }
+      return;
+    }
+
     saveStore(next);
-    setData(next);
+    commitData(next);
   }
 
-  function addSite(event: React.FormEvent) {
+  async function addSite(event: React.FormEvent) {
     event.preventDefault();
     setSiteError("");
     if (!siteName.trim()) return;
@@ -54,12 +79,17 @@ export function SitesClient() {
       job_number: job.trim(),
       address: address.trim()
     });
-    commit(next);
-    setSelectedSiteId(next.sites[0]?.id);
-    setSiteName("");
-    setClient("");
-    setJob("");
-    setAddress("");
+    const createdSite = next.sites[0];
+    try {
+      await persist(next, () => upsertSiteInSupabase(createdSite, workspace?.id ?? ""));
+      setSelectedSiteId(createdSite?.id);
+      setSiteName("");
+      setClient("");
+      setJob("");
+      setAddress("");
+    } catch (error) {
+      setSiteError(getErrorMessage(error));
+    }
   }
 
   return (
@@ -85,7 +115,7 @@ export function SitesClient() {
                 <Field label="Job number"><input className={inputClass} value={job} onChange={(e) => setJob(e.target.value)} /></Field>
                 <Field label="Address"><AddressAutocomplete value={address} onChange={setAddress} /></Field>
                 {siteError ? <p className="rounded-[8px] bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{siteError}</p> : null}
-                <button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] bg-ink px-4 text-sm font-semibold text-white transition hover:-translate-y-0.5">
+                <button type="submit" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] bg-ink px-4 text-sm font-semibold text-white transition hover:-translate-y-0.5">
                   <Plus size={17} />
                   Create Site
                 </button>
@@ -121,8 +151,8 @@ export function SitesClient() {
               accent={data.sites.findIndex((site) => site.id === selectedSite.id) % 3}
               canManage={canManageSites}
               canShare={canShareAllSites || shareableSiteIds.includes(selectedSite.id)}
-              onChange={(next) => {
-                commit(next);
+              onPersist={async (next, operation) => {
+                await persist(next, operation);
                 if (!next.sites.some((site) => site.id === selectedSite.id)) {
                   setSelectedSiteId(next.sites[0]?.id);
                 }
@@ -139,7 +169,7 @@ export function SitesClient() {
   );
 }
 
-function SitePanel({ data, siteId, accent, canManage, canShare, onChange }: { data: StoreData; siteId: string; accent: number; canManage: boolean; canShare: boolean; onChange: (data: StoreData) => void }) {
+function SitePanel({ data, siteId, accent, canManage, canShare, onPersist }: { data: StoreData; siteId: string; accent: number; canManage: boolean; canShare: boolean; onPersist: PersistChange }) {
   const site = data.sites.find((item) => item.id === siteId)!;
   const buildings = data.buildings.filter((building) => building.site_id === site.id);
   const assetCount = data.assets.filter((asset) => asset.site_id === site.id && !asset.archived_at).length;
@@ -156,7 +186,7 @@ function SitePanel({ data, siteId, accent, canManage, canShare, onChange }: { da
 
   const accentClass = ["from-safety/80 to-coral/80", "from-signal/80 to-mint/80", "from-coral/80 to-signal/80"][accent];
 
-  function addBuilding(event: React.FormEvent) {
+  async function addBuilding(event: React.FormEvent) {
     event.preventDefault();
     setPanelError("");
     if (!buildingName.trim()) return;
@@ -164,11 +194,17 @@ function SitePanel({ data, siteId, accent, canManage, canShare, onChange }: { da
       setPanelError(`Building "${buildingName.trim()}" already exists on ${site.name}.`);
       return;
     }
-    onChange(createBuilding(data, { site_id: site.id, name: buildingName.trim() }));
-    setBuildingName("");
+    const next = createBuilding(data, { site_id: site.id, name: buildingName.trim() });
+    const createdBuilding = next.buildings[0];
+    try {
+      await onPersist(next, () => upsertBuildingInSupabase(createdBuilding));
+      setBuildingName("");
+    } catch (error) {
+      setPanelError(getErrorMessage(error));
+    }
   }
 
-  function saveSite(event: React.FormEvent) {
+  async function saveSite(event: React.FormEvent) {
     event.preventDefault();
     setPanelError("");
     if (!siteDraft.name.trim()) return;
@@ -177,19 +213,30 @@ function SitePanel({ data, siteId, accent, canManage, canShare, onChange }: { da
       setPanelError(overlap);
       return;
     }
-    onChange(updateSite(data, site.id, {
+    const next = updateSite(data, site.id, {
       name: siteDraft.name.trim(),
       client_name: siteDraft.client_name.trim(),
       job_number: siteDraft.job_number.trim(),
       address: siteDraft.address.trim()
-    }));
-    setIsEditingSite(false);
+    });
+    const updatedSite = next.sites.find((item) => item.id === site.id)!;
+    try {
+      await onPersist(next, () => upsertSiteInSupabase(updatedSite));
+      setIsEditingSite(false);
+    } catch (error) {
+      setPanelError(getErrorMessage(error));
+    }
   }
 
-  function confirmDeleteSite() {
+  async function confirmDeleteSite() {
     const ok = window.confirm(`Delete ${site.name}? This will also delete ${buildings.length} buildings, their rooms, assets, photos, and history logs.`);
     if (!ok) return;
-    onChange(deleteSite(data, site.id));
+    setPanelError("");
+    try {
+      await onPersist(deleteSite(data, site.id), () => deleteSiteFromSupabase(site.id));
+    } catch (error) {
+      setPanelError(getErrorMessage(error));
+    }
   }
 
   function cancelSiteEdit() {
@@ -241,7 +288,7 @@ function SitePanel({ data, siteId, accent, canManage, canShare, onChange }: { da
               <AddressAutocomplete value={siteDraft.address} onChange={(value) => setSiteDraft({ ...siteDraft, address: value })} />
             </div>
             <div className="flex gap-2 sm:col-span-2">
-              <button className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-[8px] bg-ink px-4 text-sm font-semibold text-white"><Check size={17} />Save</button>
+              <button type="submit" className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-[8px] bg-ink px-4 text-sm font-semibold text-white"><Check size={17} />Save</button>
               <button type="button" onClick={cancelSiteEdit} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] bg-white px-4 text-sm font-semibold text-ink shadow-sm"><X size={17} />Cancel</button>
             </div>
           </form>
@@ -264,19 +311,19 @@ function SitePanel({ data, siteId, accent, canManage, canShare, onChange }: { da
           </summary>
           <form onSubmit={addBuilding} className="flex gap-2 border-t border-zinc-100 p-3">
             <input className={`${inputClass} flex-1`} value={buildingName} onChange={(e) => setBuildingName(e.target.value)} placeholder="Building name" />
-            <button className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] bg-ink text-white" aria-label="Add building"><Plus size={18} /></button>
+            <button type="submit" className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] bg-ink text-white" aria-label="Add building"><Plus size={18} /></button>
           </form>
         </details> : null}
 
         <div className="grid gap-3">
-          {buildings.map((building) => <BuildingPanel key={building.id} data={data} buildingId={building.id} canManage={canManage} canShare={canShare} onChange={onChange} />)}
+          {buildings.map((building) => <BuildingPanel key={building.id} data={data} buildingId={building.id} canManage={canManage} canShare={canShare} onPersist={onPersist} />)}
         </div>
       </div>
     </details>
   );
 }
 
-function BuildingPanel({ data, buildingId, canManage, canShare, onChange }: { data: StoreData; buildingId: string; canManage: boolean; canShare: boolean; onChange: (data: StoreData) => void }) {
+function BuildingPanel({ data, buildingId, canManage, canShare, onPersist }: { data: StoreData; buildingId: string; canManage: boolean; canShare: boolean; onPersist: PersistChange }) {
   const building = data.buildings.find((item) => item.id === buildingId)!;
   const rooms = data.rooms.filter((room) => room.building_id === building.id);
   const assetCount = data.assets.filter((asset) => asset.building_id === building.id && !asset.archived_at).length;
@@ -288,7 +335,7 @@ function BuildingPanel({ data, buildingId, canManage, canShare, onChange }: { da
   const [floor, setFloor] = useState("");
   const [buildingError, setBuildingError] = useState("");
 
-  function addRoom(event: React.FormEvent) {
+  async function addRoom(event: React.FormEvent) {
     event.preventDefault();
     setBuildingError("");
     if (!roomNumber.trim()) return;
@@ -296,13 +343,19 @@ function BuildingPanel({ data, buildingId, canManage, canShare, onChange }: { da
       setBuildingError(`Room ${roomNumber.trim()} already exists in ${building.name}.`);
       return;
     }
-    onChange(createRoom(data, { building_id: building.id, room_number: roomNumber.trim(), room_name: roomName.trim(), floor: floor.trim() }));
-    setRoomNumber("");
-    setRoomName("");
-    setFloor("");
+    const next = createRoom(data, { building_id: building.id, room_number: roomNumber.trim(), room_name: roomName.trim(), floor: floor.trim() });
+    const createdRoom = next.rooms[0];
+    try {
+      await onPersist(next, () => upsertRoomInSupabase(createdRoom));
+      setRoomNumber("");
+      setRoomName("");
+      setFloor("");
+    } catch (error) {
+      setBuildingError(getErrorMessage(error));
+    }
   }
 
-  function saveBuilding(event: React.FormEvent) {
+  async function saveBuilding(event: React.FormEvent) {
     event.preventDefault();
     setBuildingError("");
     if (!buildingDraft.trim()) return;
@@ -311,14 +364,25 @@ function BuildingPanel({ data, buildingId, canManage, canShare, onChange }: { da
       setBuildingError(`Building "${buildingDraft.trim()}" already exists on this site.`);
       return;
     }
-    onChange(updateBuilding(data, building.id, { name: buildingDraft.trim() }));
-    setIsEditingBuilding(false);
+    const next = updateBuilding(data, building.id, { name: buildingDraft.trim() });
+    const updatedBuilding = next.buildings.find((item) => item.id === building.id)!;
+    try {
+      await onPersist(next, () => upsertBuildingInSupabase(updatedBuilding));
+      setIsEditingBuilding(false);
+    } catch (error) {
+      setBuildingError(getErrorMessage(error));
+    }
   }
 
-  function confirmDeleteBuilding() {
+  async function confirmDeleteBuilding() {
     const ok = window.confirm(`Delete ${building.name}? This will also delete ${rooms.length} rooms, their assets, photos, and history logs.`);
     if (!ok) return;
-    onChange(deleteBuilding(data, building.id));
+    setBuildingError("");
+    try {
+      await onPersist(deleteBuilding(data, building.id), () => deleteBuildingFromSupabase(building.id));
+    } catch (error) {
+      setBuildingError(getErrorMessage(error));
+    }
   }
 
   return (
@@ -350,7 +414,7 @@ function BuildingPanel({ data, buildingId, canManage, canShare, onChange }: { da
         {canManage && isEditingBuilding ? (
           <form onSubmit={saveBuilding} className="flex gap-2">
             <input className={`${inputClass} flex-1 bg-white`} value={buildingDraft} onChange={(e) => setBuildingDraft(e.target.value)} autoFocus />
-            <button className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] bg-ink text-white" aria-label="Save building"><Check size={18} /></button>
+            <button type="submit" className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] bg-ink text-white" aria-label="Save building"><Check size={18} /></button>
             <button type="button" onClick={() => setIsEditingBuilding(false)} className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] bg-white text-ink shadow-sm" aria-label="Cancel building edit"><X size={18} /></button>
           </form>
         ) : null}
@@ -374,19 +438,19 @@ function BuildingPanel({ data, buildingId, canManage, canShare, onChange }: { da
             <input className={inputClass} value={roomNumber} onChange={(e) => setRoomNumber(e.target.value)} placeholder="Room no." />
             <input className={inputClass} value={roomName} onChange={(e) => setRoomName(e.target.value)} placeholder="Room name" />
             <input className={inputClass} value={floor} onChange={(e) => setFloor(e.target.value)} placeholder="Floor" />
-            <button className="inline-flex h-11 items-center justify-center rounded-[8px] bg-ink text-white" aria-label="Add room"><Plus size={18} /></button>
+            <button type="submit" className="inline-flex h-11 items-center justify-center rounded-[8px] bg-ink text-white" aria-label="Add room"><Plus size={18} /></button>
           </form>
         </details> : null}
 
         <div className="flex flex-wrap gap-2">
-          {rooms.map((room) => <EditableRoom key={room.id} data={data} room={room} canManage={canManage} onChange={onChange} />)}
+          {rooms.map((room) => <EditableRoom key={room.id} data={data} room={room} canManage={canManage} onPersist={onPersist} />)}
         </div>
       </div>
     </details>
   );
 }
 
-function EditableRoom({ data, room, canManage, onChange }: { data: StoreData; room: Room; canManage: boolean; onChange: (data: StoreData) => void }) {
+function EditableRoom({ data, room, canManage, onPersist }: { data: StoreData; room: Room; canManage: boolean; onPersist: PersistChange }) {
   const [isEditing, setIsEditing] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [draft, setDraft] = useState({
@@ -396,7 +460,7 @@ function EditableRoom({ data, room, canManage, onChange }: { data: StoreData; ro
   });
   const [roomError, setRoomError] = useState("");
 
-  function saveRoom(event: React.FormEvent) {
+  async function saveRoom(event: React.FormEvent) {
     event.preventDefault();
     setRoomError("");
     if (!draft.room_number.trim()) return;
@@ -405,19 +469,30 @@ function EditableRoom({ data, room, canManage, onChange }: { data: StoreData; ro
       setRoomError(`Room ${draft.room_number.trim()} already exists in this building.`);
       return;
     }
-    onChange(updateRoom(data, room.id, {
+    const next = updateRoom(data, room.id, {
       room_number: draft.room_number.trim(),
       room_name: draft.room_name.trim(),
       floor: draft.floor.trim()
-    }));
-    setIsEditing(false);
+    });
+    const updatedRoom = next.rooms.find((item) => item.id === room.id)!;
+    try {
+      await onPersist(next, () => upsertRoomInSupabase(updatedRoom));
+      setIsEditing(false);
+    } catch (error) {
+      setRoomError(getErrorMessage(error));
+    }
   }
 
-  function confirmDeleteRoom() {
+  async function confirmDeleteRoom() {
     const assetCount = data.assets.filter((asset) => asset.room_id === room.id && !asset.archived_at).length;
     const ok = window.confirm(`Delete room ${room.room_number}? This will also delete ${assetCount} assets in this room, their photos, and history logs.`);
     if (!ok) return;
-    onChange(deleteRoom(data, room.id));
+    setRoomError("");
+    try {
+      await onPersist(deleteRoom(data, room.id), () => deleteRoomFromSupabase(room.id));
+    } catch (error) {
+      setRoomError(getErrorMessage(error));
+    }
   }
 
   if (isEditing) {
@@ -427,7 +502,7 @@ function EditableRoom({ data, room, canManage, onChange }: { data: StoreData; ro
         <input className={inputClass} value={draft.room_number} onChange={(e) => setDraft({ ...draft, room_number: e.target.value })} placeholder="Room no." autoFocus />
         <input className={inputClass} value={draft.room_name} onChange={(e) => setDraft({ ...draft, room_name: e.target.value })} placeholder="Room name" />
         <input className={inputClass} value={draft.floor} onChange={(e) => setDraft({ ...draft, floor: e.target.value })} placeholder="Floor" />
-        <button className="inline-flex h-11 items-center justify-center rounded-[8px] bg-ink text-white" aria-label="Save room"><Check size={18} /></button>
+        <button type="submit" className="inline-flex h-11 items-center justify-center rounded-[8px] bg-ink text-white" aria-label="Save room"><Check size={18} /></button>
         <button type="button" onClick={() => setIsEditing(false)} className="inline-flex h-11 items-center justify-center rounded-[8px] bg-zinc-100 text-ink" aria-label="Cancel room edit"><X size={18} /></button>
       </form>
     );
@@ -536,4 +611,13 @@ function findSiteOverlap(data: StoreData, draft: { name: string; job_number: str
     return `That address is already attached to ${match.name}.`;
   }
   return `Site "${draft.name.trim()}" already exists.`;
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const value = error as { message?: string; details?: string; hint?: string; code?: string };
+    return [value.message, value.details, value.hint, value.code].filter(Boolean).join(" ");
+  }
+  return "Could not save this change.";
 }
