@@ -6,7 +6,6 @@ import { displayName, loadCurrentUserProfile } from "@/lib/profiles";
 import type { Asset, AssetLog, AssetPhoto, AssetStatus, Building, Room, Site, StoreData } from "@/lib/types";
 
 const activeWorkspaceKey = "sitetrack-active-workspace-id";
-const storeCacheMs = 3500;
 let storeCache: { key: string; result: SupabaseStoreResult; loadedAt: number } | null = null;
 
 export type WorkspaceSummary = {
@@ -45,6 +44,7 @@ export function getActiveWorkspaceId() {
 
 export function setActiveWorkspaceId(workspaceId: string) {
   if (typeof window === "undefined") return;
+  if (window.localStorage.getItem(activeWorkspaceKey) === workspaceId) return;
   window.localStorage.setItem(activeWorkspaceKey, workspaceId);
   clearSupabaseStoreCache();
 }
@@ -67,7 +67,7 @@ export async function loadSupabaseStore(): Promise<SupabaseStoreResult> {
   const userId = userData.user?.id;
   if (!userId) return { data: emptyStore, workspace: null, workspaces: [] };
   const cacheKey = `${userId}:${getActiveWorkspaceId()}`;
-  if (storeCache && storeCache.key === cacheKey && Date.now() - storeCache.loadedAt < storeCacheMs) {
+  if (storeCache && storeCache.key === cacheKey) {
     return storeCache.result;
   }
 

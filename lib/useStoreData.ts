@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { loadStore, saveStore } from "@/lib/store";
-import { loadSupabaseStore, saveSupabaseStore, type WorkspaceSummary } from "@/lib/supabaseStore";
+import { getActiveWorkspaceId, loadSupabaseStore, saveSupabaseStore, type WorkspaceSummary } from "@/lib/supabaseStore";
 import type { StoreData } from "@/lib/types";
 
 const emptyStore: StoreData = {
@@ -15,26 +15,102 @@ const emptyStore: StoreData = {
   asset_logs: []
 };
 
+type SharedStoreState = {
+  data: StoreData;
+  isSupabaseMode: boolean;
+  workspace: WorkspaceSummary | null;
+  isLoading: boolean;
+  userId: string;
+  activeWorkspaceId: string;
+};
+
+let sharedState: SharedStoreState = {
+  data: emptyStore,
+  isSupabaseMode: false,
+  workspace: null,
+  isLoading: false,
+  userId: "",
+  activeWorkspaceId: ""
+};
+let sharedLoadPromise: Promise<void> | null = null;
+const sharedListeners = new Set<() => void>();
+
+function publishSharedState(next: Partial<SharedStoreState>) {
+  sharedState = { ...sharedState, ...next };
+  sharedListeners.forEach((listener) => listener());
+}
+
+function updateSharedData(nextData: StoreData) {
+  publishSharedState({ data: nextData, isLoading: false });
+}
+
+function subscribeToSharedStore(listener: () => void) {
+  sharedListeners.add(listener);
+  return () => {
+    sharedListeners.delete(listener);
+  };
+}
+
 export function useStoreData() {
   const { isConfigured, user } = useAuth();
-  const [data, setData] = useState<StoreData>(emptyStore);
-  const [isSupabaseMode, setIsSupabaseMode] = useState(false);
-  const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
-  const [isLoading, setIsLoading] = useState(Boolean(isConfigured && user));
+  const [localState, setLocalState] = useState<SharedStoreState>(() => ({
+    ...sharedState,
+    isLoading: Boolean(isConfigured && user && sharedState.userId !== user.id)
+  }));
+
+  useEffect(() => subscribeToSharedStore(() => setLocalState(sharedState)), []);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadData() {
-      setIsLoading(Boolean(isConfigured && user));
       if (isConfigured && user) {
-        try {
+        const activeWorkspaceId = getActiveWorkspaceId();
+        if (
+          sharedState.userId === user.id &&
+          sharedState.activeWorkspaceId === activeWorkspaceId &&
+          sharedState.isSupabaseMode &&
+          !sharedState.isLoading
+        ) {
+          setLocalState(sharedState);
+          return;
+        }
+
+        if (sharedLoadPromise) {
+          setLocalState(sharedState);
+          try {
+            await sharedLoadPromise;
+            if (!cancelled) setLocalState(sharedState);
+          } catch {
+            if (!cancelled) setLocalState(sharedState);
+          }
+          return;
+        }
+
+        publishSharedState({
+          data: sharedState.userId === user.id && sharedState.activeWorkspaceId === activeWorkspaceId ? sharedState.data : emptyStore,
+          isSupabaseMode: true,
+          workspace: sharedState.userId === user.id && sharedState.activeWorkspaceId === activeWorkspaceId ? sharedState.workspace : null,
+          isLoading: true,
+          userId: user.id,
+          activeWorkspaceId
+        });
+
+        sharedLoadPromise = (async () => {
           const result = await loadSupabaseStore();
-          if (cancelled) return;
-          setIsSupabaseMode(true);
-          setWorkspace(result.workspace);
-          setData(result.data);
-          setIsLoading(false);
+          publishSharedState({
+            data: result.data,
+            isSupabaseMode: true,
+            workspace: result.workspace,
+            isLoading: false,
+            userId: user.id,
+            activeWorkspaceId: result.workspace?.id ?? activeWorkspaceId
+          });
+        })();
+
+        try {
+          await sharedLoadPromise;
+          if (!cancelled) setLocalState(sharedState);
           return;
         } catch (error) {
           console.error("Could not load Supabase data.", error);
@@ -42,20 +118,30 @@ export function useStoreData() {
             detail: error instanceof Error ? error.message : getSupabaseErrorMessage(error)
           }));
           if (!cancelled) {
-            setIsSupabaseMode(true);
-            setWorkspace(null);
-            setData(emptyStore);
-            setIsLoading(false);
+            publishSharedState({
+              data: emptyStore,
+              isSupabaseMode: true,
+              workspace: null,
+              isLoading: false,
+              userId: user.id,
+              activeWorkspaceId
+            });
           }
           return;
+        } finally {
+          sharedLoadPromise = null;
         }
       }
 
       if (!cancelled) {
-        setIsSupabaseMode(false);
-        setWorkspace(null);
-        setData(loadStore());
-        setIsLoading(false);
+        publishSharedState({
+          data: loadStore(),
+          isSupabaseMode: false,
+          workspace: null,
+          isLoading: false,
+          userId: "",
+          activeWorkspaceId: ""
+        });
       }
     }
 
@@ -66,7 +152,7 @@ export function useStoreData() {
   }, [isConfigured, user]);
 
   function commit(next: StoreData) {
-    setData(next);
+    updateSharedData(next);
     if (isConfigured && user) {
       window.dispatchEvent(new CustomEvent("sitetrack-sync-status", { detail: "Saving to Supabase..." }));
       void saveSupabaseStore(next)
@@ -84,7 +170,14 @@ export function useStoreData() {
     }
   }
 
-  return [data, commit, isSupabaseMode, workspace, isLoading, setData] as const;
+  return [
+    localState.data,
+    commit,
+    localState.isSupabaseMode,
+    localState.workspace,
+    localState.isLoading,
+    updateSharedData
+  ] as const;
 }
 
 function getSupabaseErrorMessage(error: unknown) {
